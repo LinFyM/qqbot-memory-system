@@ -101,9 +101,28 @@ config = {}
 
 
 def get_chat_history_token_limit() -> int:
+    """
+    获取聊天历史token长度限制
+    
+    Returns:
+        最大token数量，如果配置读取失败则返回默认值35000
+    """
     try:
-        return int(config.get("chat_history", {}).get("max_input_tokens", 35000))
-    except Exception:
+        chat_history_config = config.get("chat_history", {})
+        if not isinstance(chat_history_config, dict):
+            _log.warning(f"⚠️ chat_history配置不是字典类型: {type(chat_history_config)}，使用默认值35000")
+            return 35000
+        
+        max_tokens = chat_history_config.get("max_input_tokens", 35000)
+        result = int(max_tokens)
+        
+        if result <= 0:
+            _log.warning(f"⚠️ max_input_tokens配置值无效: {max_tokens}，使用默认值35000")
+            return 35000
+        
+        return result
+    except Exception as e:
+        _log.error(f"❌ 读取chat_history_token_limit配置失败: {e}，使用默认值35000", exc_info=True)
         return 35000
 
 # 训练调度器（在main中初始化）
@@ -1550,18 +1569,66 @@ def process_message_task(task: MessageTask):
             
             # 在生成前，先对原始历史进行token长度检查和截断
             with chat_history_lock:
+                # 确保group_id存在于group_chat_histories中
+                if group_id not in group_chat_histories:
+                    _log.warning(f"⚠️ 群 {group_id} 的聊天历史不存在，初始化为空列表")
+                    group_chat_histories[group_id] = []
+                
                 # 对原始历史进行截断（会修改原始历史并保存被删除的消息）
-                truncated_history = truncate_history_by_tokens(
-                    group_chat_histories[group_id],
-                    system_prompt,
-                    "group",
-                    group_id,
-                    max_tokens=get_chat_history_token_limit(),
-                    interrupt_event=interrupt_event
-                )
-                if truncated_history is None:
-                    _log.warning("⚠️ 截断历史返回None，回退到原始历史")
-                    truncated_history = group_chat_histories[group_id]
+                # 确保group_id存在于group_chat_histories中
+                if group_id not in group_chat_histories:
+                    _log.warning(f"⚠️ 群 {group_id} 的聊天历史不存在，初始化为空列表")
+                    group_chat_histories[group_id] = []
+
+                truncated_history = group_chat_histories[group_id].copy()  # 默认值，使用副本
+                _log.debug(f"📊 原始聊天历史长度: {len(group_chat_histories[group_id])}（群 {group_id}）")
+
+                try:
+                    max_tokens_limit = get_chat_history_token_limit()
+                    _log.debug(f"📊 获取到的max_tokens限制: {max_tokens_limit}（群 {group_id}）")
+
+                    max_tokens_limit = get_chat_history_token_limit()
+                    _log.info(f"📊 获取到的max_tokens限制: {max_tokens_limit}, 类型: {type(max_tokens_limit)}（群 {group_id}）")
+                    
+                    # 验证max_tokens_limit
+                    if max_tokens_limit is None:
+                        _log.error(f"❌ max_tokens_limit为None，使用默认值35000（群 {group_id}）")
+                        max_tokens_limit = 35000
+                    elif not isinstance(max_tokens_limit, int) or max_tokens_limit <= 0:
+                        _log.error(f"❌ max_tokens_limit无效: {max_tokens_limit}，使用默认值35000（群 {group_id}）")
+                        max_tokens_limit = 35000
+
+                    # 检查是否需要截断
+                    if len(group_chat_histories[group_id]) == 0:
+                        _log.info("📊 聊天历史为空，无需截断")
+                        truncated_history = []
+                    else:
+                        _log.info(f"📊 开始调用truncate_history_by_tokens（群 {group_id}），max_tokens={max_tokens_limit}")
+                        result = truncate_history_by_tokens(
+                            group_chat_histories[group_id],
+                            system_prompt,
+                            "group",
+                            group_id,
+                            max_tokens=max_tokens_limit,
+                            interrupt_event=interrupt_event
+                        )
+                        _log.info(f"📊 truncate_history_by_tokens返回: 类型={type(result)}, 是否为None={result is None}, 长度={len(result) if result is not None else 'N/A'}（群 {group_id}）")
+                        truncated_history = result
+
+                    # 确保返回值不为None且是列表类型
+                    if truncated_history is None:
+                        _log.error(f"❌ 截断历史返回None（群 {group_id}），回退到原始历史")
+                        truncated_history = group_chat_histories[group_id].copy()
+                    elif not isinstance(truncated_history, list):
+                        _log.error(f"❌ 截断历史返回非列表类型: {type(truncated_history)}（群 {group_id}），回退到原始历史")
+                        truncated_history = group_chat_histories[group_id].copy()
+                    else:
+                        _log.info(f"✅ 截断历史成功，长度: {len(truncated_history)}（群 {group_id}）")
+                except Exception as e:
+                    _log.error(f"❌ 截断历史时发生异常（群 {group_id}）: {e}", exc_info=True)
+                    # 异常情况下，使用原始历史
+                    truncated_history = group_chat_histories[group_id].copy()
+                
                 # 使用截断后的历史（复制一份用于生成，避免在生成过程中被修改）
                 current_history = truncated_history.copy()
             
@@ -1952,18 +2019,63 @@ def process_message_task(task: MessageTask):
             
             # 在生成前，先对原始历史进行token长度检查和截断
             with chat_history_lock:
+                # 确保user_id存在于private_chat_histories中
+                if user_id not in private_chat_histories:
+                    _log.warning(f"⚠️ 用户 {user_id} 的聊天历史不存在，初始化为空列表")
+                    private_chat_histories[user_id] = []
+                
                 # 对原始历史进行截断（会修改原始历史并保存被删除的消息）
-                truncated_history = truncate_history_by_tokens(
-                    private_chat_histories[user_id],
-                    system_prompt,
-                    "private",
-                    user_id,
-                    max_tokens=get_chat_history_token_limit(),
-                    interrupt_event=interrupt_event
-                )
-                if truncated_history is None:
-                    _log.warning(f"⚠️ 截断历史返回None（私聊 {user_id}），回退到原始历史")
-                    truncated_history = private_chat_histories[user_id]
+                # 确保user_id存在于private_chat_histories中
+                if user_id not in private_chat_histories:
+                    _log.warning(f"⚠️ 用户 {user_id} 的聊天历史不存在，初始化为空列表")
+                    private_chat_histories[user_id] = []
+
+                truncated_history = private_chat_histories[user_id].copy()  # 默认值，使用副本
+                _log.info(f"📊 原始聊天历史长度: {len(private_chat_histories[user_id])}（私聊 {user_id}）")
+
+                try:
+                    max_tokens_limit = get_chat_history_token_limit()
+                    _log.info(f"📊 获取到的max_tokens限制: {max_tokens_limit}, 类型: {type(max_tokens_limit)}（私聊 {user_id}）")
+                    
+                    # 验证max_tokens_limit
+                    if max_tokens_limit is None:
+                        _log.error(f"❌ max_tokens_limit为None，使用默认值35000（私聊 {user_id}）")
+                        max_tokens_limit = 35000
+                    elif not isinstance(max_tokens_limit, int) or max_tokens_limit <= 0:
+                        _log.error(f"❌ max_tokens_limit无效: {max_tokens_limit}，使用默认值35000（私聊 {user_id}）")
+                        max_tokens_limit = 35000
+
+                    # 检查是否需要截断
+                    if len(private_chat_histories[user_id]) == 0:
+                        _log.info("📊 聊天历史为空，无需截断")
+                        truncated_history = []
+                    else:
+                        _log.info(f"📊 开始调用truncate_history_by_tokens（私聊 {user_id}），max_tokens={max_tokens_limit}")
+                        result = truncate_history_by_tokens(
+                            private_chat_histories[user_id],
+                            system_prompt,
+                            "private",
+                            user_id,
+                            max_tokens=max_tokens_limit,
+                            interrupt_event=interrupt_event
+                        )
+                        _log.info(f"📊 truncate_history_by_tokens返回: 类型={type(result)}, 是否为None={result is None}, 长度={len(result) if result is not None else 'N/A'}（私聊 {user_id}）")
+                        truncated_history = result
+
+                    # 确保返回值不为None且是列表类型
+                    if truncated_history is None:
+                        _log.error(f"❌ 截断历史返回None（私聊 {user_id}），回退到原始历史")
+                        truncated_history = private_chat_histories[user_id].copy()
+                    elif not isinstance(truncated_history, list):
+                        _log.error(f"❌ 截断历史返回非列表类型: {type(truncated_history)}（私聊 {user_id}），回退到原始历史")
+                        truncated_history = private_chat_histories[user_id].copy()
+                    else:
+                        _log.info(f"✅ 截断历史成功，长度: {len(truncated_history)}（私聊 {user_id}）")
+                except Exception as e:
+                    _log.error(f"❌ 截断历史时发生异常（私聊 {user_id}）: {e}", exc_info=True)
+                    # 异常情况下，使用原始历史
+                    truncated_history = private_chat_histories[user_id].copy()
+                
                 # 使用截断后的历史（已经是原始历史的引用）
                 current_history = truncated_history.copy()
             
@@ -2653,6 +2765,11 @@ def truncate_history_by_tokens(chat_history: List[Dict[str, Any]], system_prompt
     """
     global model, processor
     
+    # 防御性检查：确保chat_history不为None
+    if chat_history is None:
+        _log.error(f"❌ chat_history为None，无法进行截断（{chat_type} {chat_id}）")
+        return []
+    
     # 在开始前检查中断
     if interrupt_event and interrupt_event.is_set():
         _log.info(f"⚠️ 截断历史消息在开始前被中断（{chat_type} {chat_id}）")
@@ -2735,181 +2852,192 @@ def truncate_history_by_tokens(chat_history: List[Dict[str, Any]], system_prompt
                     truncation=False,
                     padding=False
                 )
-            except Exception:
-                _log.warning(f"⚠️ 即使移除多媒体也无法进行截断检查，退回原始历史")
+            except Exception as e2:
+                _log.warning(f"⚠️ 即使移除多媒体也无法进行截断检查，退回原始历史: {e2}")
                 return chat_history
         else:
-            # 其他类型的错误，直接抛出
+            # 其他类型的错误，直接抛出异常，让调用方处理
+            _log.error(f"❌ 截断历史时发生非多媒体错误（{chat_type} {chat_id}）: {error_type}: {error_msg}", exc_info=True)
             raise e
-        
-        # 在apply_chat_template后检查中断
+    
+    # 在apply_chat_template后检查中断（只有在成功tokenize后才执行到这里）
+    if interrupt_event and interrupt_event.is_set():
+        _log.info(f"⚠️ 截断历史消息在第一次tokenize后被中断（{chat_type} {chat_id}）")
+        return chat_history
+    
+    # 检查inputs是否已定义（在异常处理后可能未定义）
+    if 'inputs' not in locals() or inputs is None:
+        _log.warning("⚠️ inputs未定义，跳过截断")
+        return chat_history
+    
+    if 'input_ids' not in inputs or not isinstance(inputs['input_ids'], torch.Tensor):
+        _log.warning("⚠️ 无法获取input_ids，跳过截断")
+        return chat_history
+    
+    input_length = inputs['input_ids'].shape[-1]
+    _log.info(f"📊 检查输入token长度: {input_length}, 最大限制: {max_tokens}")
+    
+    if input_length <= max_tokens:
+        _log.info(f"✅ 输入token长度在限制内，无需截断")
+        return chat_history
+    
+    _log.warning(f"⚠️ 输入token长度 ({input_length}) 超过最大限制 ({max_tokens})，开始截断历史消息...")
+    
+    # 逐条删除最早的消息，直到长度在限制内
+    removed_messages = []  # 用于保存被删除的消息
+    iteration = 0
+    max_iterations = 5  # 最多迭代5次
+    
+    while input_length > max_tokens and len(chat_history) > 0 and iteration < max_iterations:
+        # 在每次迭代前检查中断（重要：在删除消息前检查，避免不必要的修改）
         if interrupt_event and interrupt_event.is_set():
-            _log.info(f"⚠️ 截断历史消息在第一次tokenize后被中断（{chat_type} {chat_id}）")
+            _log.info(f"⚠️ 截断历史消息在迭代 {iteration} 中被中断（{chat_type} {chat_id}），恢复被删除的消息")
+            # 恢复被删除的消息
+            chat_history[:0] = removed_messages
             return chat_history
         
-        if 'input_ids' not in inputs or not isinstance(inputs['input_ids'], torch.Tensor):
-            _log.warning("⚠️ 无法获取input_ids，跳过截断")
-            return chat_history
+        iteration += 1
         
-        input_length = inputs['input_ids'].shape[-1]
-        _log.info(f"📊 检查输入token长度: {input_length}, 最大限制: {max_tokens}")
+        # 删除最早的一条消息
+        removed_msg = chat_history.pop(0)
+        removed_messages.append(removed_msg)
         
-        if input_length <= max_tokens:
-            _log.info(f"✅ 输入token长度在限制内，无需截断")
-            return chat_history
+        # 重新构建消息并检查长度
+        test_messages = []
+        if system_prompt:
+            test_messages.append({
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}]
+            })
+        test_messages.extend(chat_history)
         
-        _log.warning(f"⚠️ 输入token长度 ({input_length}) 超过最大限制 ({max_tokens})，开始截断历史消息...")
-        
-        # 逐条删除最早的消息，直到长度在限制内
-        removed_messages = []  # 用于保存被删除的消息
-        iteration = 0
-        max_iterations = 5  # 最多迭代5次
-        
-        while input_length > max_tokens and len(chat_history) > 0 and iteration < max_iterations:
-            # 在每次迭代前检查中断（重要：在删除消息前检查，避免不必要的修改）
+        try:
+            # 在重新tokenize前检查中断
             if interrupt_event and interrupt_event.is_set():
-                _log.info(f"⚠️ 截断历史消息在迭代 {iteration} 中被中断（{chat_type} {chat_id}），恢复被删除的消息")
-                # 恢复被删除的消息
+                _log.info(f"⚠️ 截断历史消息在重新tokenize前被中断（{chat_type} {chat_id}），恢复被删除的消息")
                 chat_history[:0] = removed_messages
                 return chat_history
             
-            iteration += 1
-            
-            # 删除最早的一条消息
-            removed_msg = chat_history.pop(0)
-            removed_messages.append(removed_msg)
-            
-            # 重新构建消息并检查长度
-            test_messages = []
-            if system_prompt:
-                test_messages.append({
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}]
-                })
-            test_messages.extend(chat_history)
-            
-            try:
-            # 在重新tokenize前检查中断
-                if interrupt_event and interrupt_event.is_set():
-                    _log.info(f"⚠️ 截断历史消息在重新tokenize前被中断（{chat_type} {chat_id}），恢复被删除的消息")
-                    chat_history[:0] = removed_messages
-                    return chat_history
-                
-                test_inputs = processor.apply_chat_template(
-                    test_messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
+            test_inputs = processor.apply_chat_template(
+                test_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
                 return_tensors="pt",
                 max_length=None,
                 truncation=False,
                 padding=False
-                )
-                
+            )
+            
             # 在重新tokenize后检查中断
-                if interrupt_event and interrupt_event.is_set():
-                    _log.info(f"⚠️ 截断历史消息在重新tokenize后被中断（{chat_type} {chat_id}），恢复被删除的消息")
-                    chat_history[:0] = removed_messages
-                    return chat_history
-                
-                input_length = test_inputs['input_ids'].shape[-1]
-                _log.info(f"📊 删除 {iteration} 条消息后，输入token长度: {input_length}")
-                
-                if input_length <= max_tokens:
-                    # 长度在限制内，保存被删除的消息并返回
-                    if removed_messages:
-                        save_chat_history_to_storage(chat_type, chat_id, removed_messages)
-                        _log.info(f"✅ 已截断历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
-                    return chat_history
-                    
-            except Exception as e:
-                _log.error(f"❌ 截断历史消息时重新tokenize失败: {e}", exc_info=True)
-                # 如果出错，恢复被删除的消息
-                chat_history[:0] = removed_messages
-                return chat_history
-        
-        # 如果超过5次迭代还没有达到要求，清空一半的聊天记录
-        if iteration >= max_iterations and input_length > max_tokens:
-            # 在清空一半前检查中断
             if interrupt_event and interrupt_event.is_set():
-                _log.info(f"⚠️ 截断历史消息在清空一半前被中断（{chat_type} {chat_id}），恢复被删除的消息")
+                _log.info(f"⚠️ 截断历史消息在重新tokenize后被中断（{chat_type} {chat_id}），恢复被删除的消息")
                 chat_history[:0] = removed_messages
                 return chat_history
             
-            _log.warning(f"⚠️ 超过 {max_iterations} 次迭代仍未达到要求，清空一半的聊天记录...")
+            input_length = test_inputs['input_ids'].shape[-1]
+            _log.info(f"📊 删除 {iteration} 条消息后，输入token长度: {input_length}")
             
-            # 保存将被清空的消息
-            half_count = len(chat_history) // 2
-            if half_count > 0:
-                removed_messages.extend(chat_history[:half_count])
-                chat_history[:] = chat_history[half_count:]
-            
-            # 重新检查长度
-            test_messages = []
-            if system_prompt:
-                test_messages.append({
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}]
-                })
-            test_messages.extend(chat_history)
-            
-            try:
-                # 在清空一半后tokenize前检查中断
-                if interrupt_event and interrupt_event.is_set():
-                    _log.info(f"⚠️ 截断历史消息在清空一半后tokenize前被中断（{chat_type} {chat_id}），恢复被删除的消息")
-                    chat_history[:0] = removed_messages
-                    return chat_history
+            if input_length <= max_tokens:
+                # 长度在限制内，保存被删除的消息并返回
+                if removed_messages:
+                    save_chat_history_to_storage(chat_type, chat_id, removed_messages)
+                    _log.info(f"✅ 已截断历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
+                return chat_history
                 
-                test_inputs = processor.apply_chat_template(
-                    test_messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
-                    return_tensors="pt",
-                    max_length=None,
-                    truncation=False,
-                    padding=False
-                )
-                
-                # 在清空一半后tokenize后检查中断
-                if interrupt_event and interrupt_event.is_set():
-                    _log.info(f"⚠️ 截断历史消息在清空一半后tokenize后被中断（{chat_type} {chat_id}），恢复被删除的消息")
-                    chat_history[:0] = removed_messages
-                    return chat_history
-                
-                input_length = test_inputs['input_ids'].shape[-1]
-                _log.info(f"📊 清空一半后，输入token长度: {input_length}")
-                
-                if input_length <= max_tokens:
-                    # 长度在限制内，保存被删除的消息并返回
-                    if removed_messages:
-                        save_chat_history_to_storage(chat_type, chat_id, removed_messages)
-                        _log.info(f"✅ 已清空一半历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
-                    return chat_history
-                else:
-                    # 清空一半后仍然超过限制，清空全部聊天记录
-                    _log.error(f"❌ 清空一半后仍然超过限制 ({input_length} > {max_tokens})，清空全部聊天记录")
-                    removed_messages.extend(chat_history)
-                    chat_history.clear()
-                    
-                    # 保存所有被删除的消息
-                    if removed_messages:
-                        save_chat_history_to_storage(chat_type, chat_id, removed_messages)
-                        _log.warning(f"⚠️ 已清空全部历史消息: 删除 {len(removed_messages)} 条")
-                    return chat_history
-                    
-            except Exception as e:
-                _log.error(f"❌ 清空一半后重新tokenize失败: {e}", exc_info=True)
-                # 如果出错，恢复被删除的消息
+        except Exception as e:
+            _log.error(f"❌ 截断历史消息时重新tokenize失败: {e}", exc_info=True)
+            # 如果出错，恢复被删除的消息
+            chat_history[:0] = removed_messages
+            return chat_history
+    
+    # 如果超过5次迭代还没有达到要求，清空一半的聊天记录
+    if iteration >= max_iterations and input_length > max_tokens:
+        # 在清空一半前检查中断
+        if interrupt_event and interrupt_event.is_set():
+            _log.info(f"⚠️ 截断历史消息在清空一半前被中断（{chat_type} {chat_id}），恢复被删除的消息")
+            chat_history[:0] = removed_messages
+            return chat_history
+        
+        _log.warning(f"⚠️ 超过 {max_iterations} 次迭代仍未达到要求，清空一半的聊天记录...")
+        
+        # 保存将被清空的消息
+        half_count = len(chat_history) // 2
+        if half_count > 0:
+            removed_messages.extend(chat_history[:half_count])
+            chat_history[:] = chat_history[half_count:]
+        
+        # 重新检查长度
+        test_messages = []
+        if system_prompt:
+            test_messages.append({
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}]
+            })
+        test_messages.extend(chat_history)
+        
+        try:
+            # 在清空一半后tokenize前检查中断
+            if interrupt_event and interrupt_event.is_set():
+                _log.info(f"⚠️ 截断历史消息在清空一半后tokenize前被中断（{chat_type} {chat_id}），恢复被删除的消息")
                 chat_history[:0] = removed_messages
                 return chat_history
-        
-        # 保存被删除的消息
-        if removed_messages:
-            save_chat_history_to_storage(chat_type, chat_id, removed_messages)
-            _log.info(f"✅ 已截断历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
-        
-        return chat_history
+            
+            test_inputs = processor.apply_chat_template(
+                test_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+                max_length=None,
+                truncation=False,
+                padding=False
+            )
+            
+            # 在清空一半后tokenize后检查中断
+            if interrupt_event and interrupt_event.is_set():
+                _log.info(f"⚠️ 截断历史消息在清空一半后tokenize后被中断（{chat_type} {chat_id}），恢复被删除的消息")
+                chat_history[:0] = removed_messages
+                return chat_history
+            
+            input_length = test_inputs['input_ids'].shape[-1]
+            _log.info(f"📊 清空一半后，输入token长度: {input_length}")
+            
+            if input_length <= max_tokens:
+                # 长度在限制内，保存被删除的消息并返回
+                if removed_messages:
+                    save_chat_history_to_storage(chat_type, chat_id, removed_messages)
+                    _log.info(f"✅ 已清空一半历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
+                return chat_history
+            else:
+                # 清空一半后仍然超过限制，清空全部聊天记录
+                _log.error(f"❌ 清空一半后仍然超过限制 ({input_length} > {max_tokens})，清空全部聊天记录")
+                removed_messages.extend(chat_history)
+                chat_history.clear()
+                
+                # 保存所有被删除的消息
+                if removed_messages:
+                    save_chat_history_to_storage(chat_type, chat_id, removed_messages)
+                    _log.warning(f"⚠️ 已清空全部历史消息: 删除 {len(removed_messages)} 条")
+                return chat_history
+                
+        except Exception as e:
+            _log.error(f"❌ 清空一半后重新tokenize失败: {e}", exc_info=True)
+            # 如果出错，恢复被删除的消息
+            chat_history[:0] = removed_messages
+            return chat_history
+    
+    # 保存被删除的消息
+    if removed_messages:
+        save_chat_history_to_storage(chat_type, chat_id, removed_messages)
+        _log.info(f"✅ 已截断历史消息: 删除 {len(removed_messages)} 条，当前长度: {input_length}")
+    
+    # 确保总是返回chat_history（防御性检查）
+    if chat_history is None:
+        _log.error(f"❌ chat_history意外变为None（{chat_type} {chat_id}），返回空列表")
+        return []
+    
+    return chat_history
         
 
 
