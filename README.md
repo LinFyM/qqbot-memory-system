@@ -60,17 +60,37 @@ python client/qqbot_client_full.py
 
 ```
 qqbot_new/
-├── server/              # 服务器端代码
-│   ├── api_server_qwen3vl.py  # 主API服务器
-│   ├── app.py          # Flask应用入口
-│   ├── memory/         # 记忆系统模块
-│   └── routes/         # API路由
-├── recall/             # 训练相关代码
-│   ├── text_embedding_train.py  # 第一步训练
-│   └── text_memory_train.py     # 第二步训练
-├── client/             # QQ客户端代码
-├── requirements.txt    # 依赖包列表
-└── TECHNICAL_REPORT.md  # 技术报告
+├── server/                          # 服务器端代码
+│   ├── api_server_qwen3vl.py        # 主API服务器 - 处理消息、模型推理、记忆召回
+│   ├── app.py                       # Flask应用入口 - 注册蓝图和路由
+│   ├── config_qwen3vl.yaml          # 主配置文件 - 模型、设备、记忆系统配置
+│   ├── memory/                      # 记忆系统模块
+│   │   ├── training_service.py      # 训练服务 - 整合训练流程，提取记忆并训练模型
+│   │   ├── training_scheduler.py    # 训练调度器 - 定时任务管理，自动触发训练
+│   │   ├── vector_db.py             # 向量数据库 - 存储和检索记忆向量
+│   │   ├── token_manager.py          # Token管理器 - 管理<recall>等特殊token
+│   │   └── utils.py                 # 工具函数 - 记忆注入、向量处理等
+│   ├── routes/                       # API路由
+│   │   ├── chat.py                  # 聊天路由 - 处理私聊和群聊请求
+│   │   ├── training.py              # 训练路由 - 手动触发训练任务
+│   │   └── upload.py                # 文件上传路由 - 处理图片等文件上传
+│   ├── services/                     # 业务服务层
+│   │   ├── generation.py            # 生成服务 - 模型推理和文本生成
+│   │   ├── handler.py               # 消息处理 - 消息解析和预处理
+│   │   └── history.py               # 历史管理 - 对话历史存储和检索
+│   └── core/                        # 核心模块
+│       ├── model.py                 # 模型管理 - 模型加载和卸载
+│       └── config.py                # 配置管理 - 配置加载和验证
+├── recall/                          # 训练相关代码
+│   ├── text_embedding_train.py      # 第一步训练 - 训练<recall> token的embedding
+│   ├── text_memory_train.py         # 第二步训练 - 训练记忆文本解码能力
+│   ├── model_utils.py               # 模型工具 - 模型解包、前向传播等工具函数
+│   └── add_special_tokens_wrapper.py # Token添加 - 为模型添加特殊token
+├── client/                          # QQ客户端代码
+│   └── qqbot_client_full.py         # QQ客户端 - 连接QQ服务器，转发消息到API
+├── requirements.txt                 # Python依赖包列表
+├── README.md                        # 项目说明文档
+└── TECHNICAL_REPORT.md              # 技术报告 - 详细的架构和实现文档
 ```
 
 ## 文档
