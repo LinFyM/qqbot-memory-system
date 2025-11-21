@@ -1334,25 +1334,11 @@ class EnhancedTextMemoryTrainer:
         import random
         test_indices = random.sample(range(len(texts)), effective_sample_count)
         
-        # 创建临时数据集用于获取截断的上下文（与训练时一致）
-        temp_dataset = EnhancedTextMemoryDataset(
-            texts,
-            embeddings,
-            self.tokenizer,
-            self.merged_model,
-            max_length=self.dataset_max_length,
-            noise_std=0.0,  # 测试时不添加噪声
-            is_main_process_fn=self.is_main_process,
-            sft_full_texts=sft_full_texts,
-            activation_prompts=self.activation_prompts,
-            end_prompts=self.end_prompts,
-        )
-        
+        tokenizer = self._get_tokenizer()
         recall_start_id = self.special_token_ids.get('<recall>')
         recall_id = self.special_token_ids.get('<|recall|>')
         recall_end_id = self.special_token_ids.get('</recall>')
         
-        tokenizer = self._get_tokenizer()
         if recall_start_id is None:
             recall_start_id = tokenizer.convert_tokens_to_ids('<recall>')
         if recall_end_id is None:
@@ -1378,47 +1364,114 @@ class EnhancedTextMemoryTrainer:
         pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
         eos_token_id = tokenizer.eos_token_id
         
+        # 使用trainer中已设置的memory_pad_id
+        memory_pad_id = self.memory_pad_id
+        
+        # 编码<recall> token
+        recall_tokens = tokenizer(self.recall_start_token, add_special_tokens=False)['input_ids']
+        recall_token_count = len(recall_tokens)
+        
+        # 为了测试模型在真实场景下的表现，测试时也应该有上下文
+        # 使用和训练时一样的上下文处理方式：从SFT数据中随机选择并截断
+        test_context_text = ""
+        
+        # 如果提供了SFT数据，使用和训练时一样的截断方式
+        if sft_full_texts and len(sft_full_texts) > 0:
+            import random
+            # 随机选择一个SFT数据
+            sft_data = random.choice(sft_full_texts)
+            # 使用和训练时一样的截断方法：_truncate_sft_at_thinking
+            # 创建一个临时的dataset对象来使用这个方法
+            temp_dataset_for_context = EnhancedTextMemoryDataset(
+                texts[:1] if texts else ["dummy"],  # 只需要一个dummy text
+                embeddings[:1] if embeddings else [torch.zeros(4096)],  # 只需要一个dummy embedding
+                self.tokenizer,
+                self.merged_model,
+                max_length=self.dataset_max_length,
+                noise_std=0.0,
+                is_main_process_fn=self.is_main_process,
+                sft_full_texts=sft_full_texts,
+                activation_prompts=self.activation_prompts,
+                end_prompts=self.end_prompts,
+            )
+            # 使用和训练时一样的截断方法
+            test_context_text = temp_dataset_for_context._truncate_sft_at_thinking(sft_data)
+        
+        # 测试时使用固定的激活提示语（使用第一个，确保测试一致性）
+        test_activation_prompt = self.activation_prompts[0].strip() if self.activation_prompts else ""
+        
+        # 编码上下文和激活提示语
+        context_tokens = tokenizer(test_context_text, add_special_tokens=False)['input_ids'] if test_context_text else []
+        activation_tokens = tokenizer(test_activation_prompt, add_special_tokens=False)['input_ids'] if test_activation_prompt else []
+        
+        # 构造核心输入序列：<recall> + <|memory_pad|>
+        core_input_tokens = recall_tokens + [memory_pad_id]
+        
+        # 构造完整输入序列
+        full_input_tokens = context_tokens + activation_tokens + core_input_tokens
+        embedding_position = len(context_tokens) + len(activation_tokens) + recall_token_count
+        
+        print(f"📋 测试配置:")
+        print(f"   上下文: {'有 (' + str(len(context_tokens)) + ' tokens)' if test_context_text else '无'}")
+        print(f"   激活提示语: {test_activation_prompt if test_activation_prompt else '无'}")
+        print(f"   注意: 结束提示语是训练时的目标，不是输入的一部分")
+        print(f"   输入序列长度: {len(full_input_tokens)}")
+        print(f"   Embedding插入位置: {embedding_position}")
+        
         for i, idx in enumerate(test_indices):
-            # 每次测试前清理模型状态，确保测试独立
+            # 每次测试前彻底清理模型状态，确保测试独立
             self.merged_model.eval()
+            
+            # 清理模型内部状态（如果有DDP包装，需要访问base_model）
+            if hasattr(self.merged_model, 'module'):
+                # DDP包装的模型
+                base_model = self.merged_model.module
+            else:
+                base_model = self.merged_model
+            
             # 清理可能存在的缓存状态
-            if hasattr(self.merged_model, 'reset_cache'):
-                self.merged_model.reset_cache()
-            # 清理显存缓存
+            if hasattr(base_model, 'reset_cache'):
+                base_model.reset_cache()
+            if hasattr(base_model, 'base_model') and hasattr(base_model.base_model, 'reset_cache'):
+                base_model.base_model.reset_cache()
+            
+            # 清理所有CUDA缓存和同步
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            
-            # 刷新数据集状态，确保每次测试使用新的随机上下文
-            temp_dataset.refresh_epoch_data()
+                torch.cuda.synchronize()
             
             original_text = texts[idx]
-            representation = embeddings[idx]
+            # 直接使用原始embedding，不通过dataset获取
+            embedding_to_insert = embeddings[idx]
             
             print(f"\n{'='*80}")
             print(f"🧪 测试样本 {i+1}/{num_samples} (索引: {idx})")
             print(f"📝 原始文本: {original_text}")
+            if test_context_text:
+                print(f"📋 测试上下文: {test_context_text[:200]}..." if len(test_context_text) > 200 else f"📋 测试上下文: {test_context_text}")
+            if test_activation_prompt:
+                print(f"📋 激活提示语: {test_activation_prompt}")
+            print(f"📋 期望生成: 记忆文本 + </recall> + 结束提示语")
             
             try:
-                # 使用与训练一致的数据构建方式：从数据集获取样本（包含上下文）
-                sample = temp_dataset._get_memory_decode_sample(idx)
-                context_text = sample.get('context_text', '')
-                sequence_tokens = sample['sequence_tokens']  # 包含上下文 + <recall> + [embedding_placeholder]
-                embedding_to_insert = sample['embedding_to_insert']
-                embedding_position = sample['embedding_position']
-                
-                if context_text:
-                    print(f"📋 上下文（截断的SFT文本）: {context_text[:200]}..." if len(context_text) > 200 else f"📋 上下文（截断的SFT文本）: {context_text}")
+                # 直接使用原始embedding构建测试输入（不通过dataset）
+                sequence_tokens = torch.tensor(full_input_tokens, dtype=torch.long)
                 
                 # 构建输入embeddings（与训练时一致）
-                    embedding_layer = self.merged_model.get_input_embeddings()
-                    device = next(self.merged_model.parameters()).device
+                embedding_layer = self.merged_model.get_input_embeddings()
+                device = next(self.merged_model.parameters()).device
+                
+                # 确保embedding在正确的设备和数据类型上
+                # 获取模型的数据类型
+                model_dtype = next(self.merged_model.parameters()).dtype
+                embedding_to_insert = embedding_to_insert.to(device).to(model_dtype)
                 
                 # 将token序列转换为embeddings
                 sequence_tokens = sequence_tokens.to(device)
                 token_embeddings = embedding_layer(sequence_tokens.unsqueeze(0))  # [1, seq_len, embed_dim]
                 
                 # 替换embedding placeholder位置的embedding为实际的记忆向量
-                token_embeddings[0, embedding_position] = embedding_to_insert.to(device)
+                token_embeddings[0, embedding_position] = embedding_to_insert
                 
                 # 构建attention mask
                 attention_mask = torch.ones(1, sequence_tokens.shape[0], device=device, dtype=torch.long)
@@ -1455,8 +1508,7 @@ class EnhancedTextMemoryTrainer:
                         generate_kwargs["top_p"] = top_p
                         if top_k is not None:
                             generate_kwargs["top_k"] = max(int(top_k), 0)
-                    else:
-                        generate_kwargs["temperature"] = temperature
+                    # else分支：do_sample=False时不需要设置temperature、top_p、top_k
 
                     if repetition_penalty and repetition_penalty != 1.0:
                         generate_kwargs["repetition_penalty"] = repetition_penalty
@@ -1524,12 +1576,24 @@ class EnhancedTextMemoryTrainer:
                 if 'generated_ids' in locals():
                     del generated_ids
                 # 清理模型可能保留的内部状态
-                if hasattr(self.merged_model, 'reset_cache'):
-                    self.merged_model.reset_cache()
+                if hasattr(self.merged_model, 'module'):
+                    base_model = self.merged_model.module
+                else:
+                    base_model = self.merged_model
+                
+                if hasattr(base_model, 'reset_cache'):
+                    base_model.reset_cache()
+                if hasattr(base_model, 'base_model') and hasattr(base_model.base_model, 'reset_cache'):
+                    base_model.base_model.reset_cache()
+                
                 # 清理显存缓存
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()  # 确保所有CUDA操作完成
+                
+                # 清理Python变量引用
+                import gc
+                gc.collect()
         
         print(f"\n{'='*80}")
         print("🔍 观察以上token ID输出，特别注意:")

@@ -306,7 +306,7 @@ memory:
       learning_rate: 1e-4  # 学习率 - 降低到5e-5
       memory_dataset_max_length: 3000  # 第二步训练构造样本时的最大token长度
       memory_test_max_new_tokens: 300  # 训练后测试阶段的最大生成长度
-      memory_test_sample_count: 1  # 测试阶段抽样条目数量
+      memory_test_sample_count: 2  # 测试阶段抽样条目数量
       memory_test_use_cache: false  # 测试生成是否使用KV缓存（禁用可降低显存）
       # k_folds: 4  # K折交叉验证（已移除，改为训练/验证集模式）
 

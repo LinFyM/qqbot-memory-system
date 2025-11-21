@@ -1281,9 +1281,9 @@ class RecallMemoryTrainer:
         best_loss = self._train_model(
             train_texts, train_embeddings,
             val_texts, val_embeddings,
-                num_epochs, batch_size, learning_rate,
+            num_epochs, batch_size, learning_rate,
             save_path
-            )
+        )
 
         # 保存最终模型
         if self.is_main_process():
