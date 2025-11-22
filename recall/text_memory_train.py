@@ -1384,7 +1384,7 @@ class EnhancedTextMemoryTrainer:
             # 创建一个临时的dataset对象来使用这个方法
             temp_dataset_for_context = EnhancedTextMemoryDataset(
                 texts[:1] if texts else ["dummy"],  # 只需要一个dummy text
-                embeddings[:1] if embeddings else [torch.zeros(4096)],  # 只需要一个dummy embedding
+                embeddings[:1] if embeddings is not None and len(embeddings) > 0 else [torch.zeros(4096)],  # 只需要一个dummy embedding
                 self.tokenizer,
                 self.merged_model,
                 max_length=self.dataset_max_length,
