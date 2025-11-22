@@ -17,7 +17,7 @@ model:
   # - CPU: "cpu"
   # - 自动分配: "auto"（使用所有可用GPU）
   # 单卡部署：指定单个GPU
-  device: "cuda:7"
+  device: "cuda:2"
   # 多GPU配置（当device为auto或列表时使用）
   multi_gpu:
     enabled: false  # 单卡模式，关闭多GPU
