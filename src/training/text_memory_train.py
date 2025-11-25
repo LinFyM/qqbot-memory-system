@@ -1860,6 +1860,17 @@ class EnhancedTextMemoryTrainer:
         import random
         test_context_text = ""
         
+        # 如果sft_full_texts为空，尝试从dataset中获取
+        if not sft_full_texts or len(sft_full_texts) == 0:
+            if hasattr(self, 'current_dataset'):
+                dataset = self.current_dataset
+                # 对于MixedMemorySFTDataset，sft_full_texts存储在memory_dataset中
+                if hasattr(dataset, 'memory_dataset') and hasattr(dataset.memory_dataset, 'sft_full_texts'):
+                    sft_full_texts = dataset.memory_dataset.sft_full_texts
+                # 对于EnhancedTextMemoryDataset，直接获取
+                elif hasattr(dataset, 'sft_full_texts'):
+                    sft_full_texts = dataset.sft_full_texts
+        
         # 和训练时完全一样的逻辑：优先从SFT数据中随机选择并截断
         if sft_full_texts and len(sft_full_texts) > 0:
             sft_data = random.choice(sft_full_texts)
@@ -2333,6 +2344,9 @@ class EnhancedTextMemoryTrainer:
             train_loader, dataset = self.create_dataloader(
                 texts, embeddings, batch_size, True, noise_std, sft_full_texts=sft_full_texts
             )
+        
+        # 保存dataset引用，以便测试时使用
+        self.current_dataset = dataset
         
         # 优化器 - 确保包含特殊token embedding
         optimizer_params = []

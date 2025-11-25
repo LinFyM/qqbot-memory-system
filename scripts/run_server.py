@@ -67,13 +67,26 @@ def main():
 
         # 设置信号处理器，确保Ctrl+C能正确退出
         shutdown_flag = threading.Event()
+        original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_DFL)
+        original_sigterm_handler = None
+        if hasattr(signal, 'SIGTERM'):
+            original_sigterm_handler = signal.signal(signal.SIGTERM, signal.SIG_DFL)
         
         def signal_handler(signum, frame):
             """处理SIGINT和SIGTERM信号"""
-            print(f"\n收到信号 {signum}，正在退出...")
+            print(f"\n收到信号 {signum}，正在强制退出...")
             sys.stdout.flush()
             sys.stderr.flush()
             shutdown_flag.set()
+            
+            # 尝试清理GPU资源
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except:
+                pass
+            
             # 直接退出，不执行清理代码（避免阻塞）
             # 使用os._exit确保立即退出，不等待任何清理
             os._exit(0)
