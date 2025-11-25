@@ -67,6 +67,7 @@ def generate_message_key(message: Dict[str, Any]) -> str:
         消息键
     """
     role = message.get("role", "")
+    timestamp = message.get("timestamp")
     content = message.get("content", [])
     
     # 提取文本内容
@@ -76,6 +77,8 @@ def generate_message_key(message: Dict[str, Any]) -> str:
             text_parts.append(item.get("text", ""))
     
     text = "".join(text_parts)[:100]  # 只取前100个字符
+    if timestamp is not None:
+        return f"{role}:{timestamp}:{text}"
     return f"{role}:{text}"
 
 

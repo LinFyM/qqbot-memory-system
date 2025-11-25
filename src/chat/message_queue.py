@@ -315,7 +315,7 @@ def process_message_task(
             max_history = config.get("chat_history", {}).get("max_history_length", 200)
             with chat_history_lock:
                 history = list(get_chat_history(chat_type, chat_id))
-                history.append({"role": "user", "content": user_message})
+                history.append({"role": "user", "content": user_message, "timestamp": timestamp})
                 history, removed_messages = maintain_chat_history(chat_type, chat_id, history, max_history)
                 set_chat_history(chat_type, chat_id, history)
                 chat_history_snapshot = history.copy()
@@ -436,7 +436,8 @@ def process_message_task(
                     assistant_text = "<no_reply>"
                 latest_history.append({
                     "role": "assistant",
-                    "content": [{"type": "text", "text": assistant_text}]
+                    "content": [{"type": "text", "text": assistant_text}],
+                    "timestamp": time.time()
                 })
                 latest_history, removed_messages = maintain_chat_history(chat_type, chat_id, latest_history, max_history)
                 set_chat_history(chat_type, chat_id, latest_history)
