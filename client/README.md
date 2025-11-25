@@ -36,14 +36,14 @@ config.set_token("你的token")
 
 ### 3. 配置服务器防火墙
 
-在服务器上开放API端口（默认8888）：
+在服务器上开放API端口（默认9999）：
 
 ```bash
 # 如果使用iptables
-sudo iptables -A INPUT -p tcp --dport 8888 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 9999 -j ACCEPT
 
 # 或使用firewalld
-sudo firewall-cmd --add-port=8888/tcp --permanent
+sudo firewall-cmd --add-port=9999/tcp --permanent
 sudo firewall-cmd --reload
 ```
 
