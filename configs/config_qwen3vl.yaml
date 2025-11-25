@@ -1,0 +1,106 @@
+# Qwen3-VL API服务器配置文件
+# 可以修改此文件来配置服务器参数
+
+# 服务器配置
+server:
+  host: "0.0.0.0"  # 服务器监听地址，0.0.0.0表示监听所有接口
+  port: 9999        # 服务器端口
+
+# 模型配置
+model:
+  # 模型路径（相对于项目根目录或绝对路径）
+  # path: "./models/Qwen3-VL-8B-Instruct"
+  path: "./models/Qwen3-VL-4B-Thinking"
+  # 设备配置，支持：
+  # - 单GPU: "cuda:0", "cuda:1" 等
+  # - 多GPU: ["cuda:0", "cuda:1", "cuda:2", "cuda:3"]
+  # - CPU: "cpu"
+  # - 自动分配: "auto"（使用所有可用GPU）
+  # 单卡部署：指定单个GPU
+  device: "cuda:3"
+  # 多GPU配置（当device为auto或列表时使用）
+  multi_gpu:
+    enabled: false  # 单卡模式，关闭多GPU
+    # max_memory: {0: "10GB", 1: "20GB"}
+    gradient_accumulation_steps: 1  # 单卡下可保持1
+
+# 生成参数配置（完全按照官方推荐）
+generation:
+  max_new_tokens: 40960   # 最大生成token数（官方推荐out_seq_length=40960）
+  temperature: 1.0       # 温度参数（官方推荐1.0）
+  top_p: 0.95            # top-p采样参数（官方推荐0.95）
+  top_k: 20              # top-k采样参数（官方推荐20）
+  repetition_penalty: 1.0  # 重复惩罚系数（官方推荐1.0）
+  presence_penalty: 0.5     # 存在惩罚系数（官方推荐0.0）
+  do_sample: true        # 是否使用采样（官方推荐true，对应greedy='false'）
+  out_seq_length: 40960
+
+# 聊天历史配置
+chat_history:
+  max_history_length: 200  # 每个会话保留的最大历史消息数
+  max_input_tokens: 32000  # 输入到模型前允许的最大token数（超出将截断）
+
+# 提示词配置文件路径
+prompt_config_path: "./configs/prompts.yaml"
+# 记忆框架配置
+memory:
+  enabled: true  # 是否启用记忆功能
+  memory_db_path: "./models/memory_db/memory_embeddings.pt"  # 记忆数据库路径
+  memory_db:
+    max_size: 100000           # 记忆库条目上限，超出后按命中次数淘汰
+    enable_eviction: true      # 是否启用淘汰策略
+  autoregressive_recall:
+    enabled: true            # 是否启用自回归回忆机制
+    top_k: 10                 # 记忆检索top_k
+    temperature: 0.8         # 记忆采样温度
+    top_p: 0.95               # 记忆采样top-p（1.0表示关闭）
+    use_sampling: true       # 记忆向量选择是否使用采样（默认true，使用温度采样；false使用贪婪选择）
+    debug: false             # 是否输出回忆检索调试信息（包括<recall> token生成调试）
+  training:
+    enabled: true  # 是否启用自动训练
+    schedule: "3"  # 训练时间：凌晨3点（只执行一次）
+    base_model_path: "./models/Qwen3-VL-4B-Thinking"  # 基础模型路径（用于训练）
+    trained_model_dir: "./models/trained"  # 训练后模型保存目录
+    token_added_model_dir: "./models/token_added"  # 添加了token的模型保存目录
+    memory_db_dir: "./models/memory_db"  # 记忆数据库目录
+    chat_history_storage_dir: "./models/chat_history_storage"  # 聊天记录存储目录
+    auto_restart_after_training: true  # 训练完成后是否自动重启（true/false）
+    restart_mode: "restart_server"  # 重启模式："reload_model"（仅重新加载模型，训练时不可用）或 "restart_server"（完整重启服务器，推荐）
+    # 通用SFT配置（按epoch穿插）
+    sft:
+      enabled: true
+      dataset_path: "./data/Chinese-Qwen3-235B-Thinking-2507-Distill-data-110k-SFT/qwen3_235b_thinking_2507_distill_110k.jsonl"  # 支持相对项目根路径
+      per_epoch: true
+      max_per_epoch: null   # 每次插入SFT的最大样本数上限（可按需调大/小）
+      seed: 42
+    # 导出配置：确保VL资产完整
+    export:
+      save_full_vl_assets: true
+      merge_lora: true
+    lora_config:
+      r: 4  # LoRA rank - 进一步降低到最小
+      lora_alpha: 8  # LoRA alpha - 大幅降低
+      lora_dropout: 0.1  # LoRA dropout
+      # 第一步训练LoRA配置（减少显存占用）
+      step1_lora_target_modules: ["q_proj", "v_proj"]  # 只应用到Q和V，减少约71%的LoRA参数
+      # 第二步训练LoRA配置（完整配置）
+      step2_lora_target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    training_config:
+      # max_length_recall_training: null  # 第一步训练的最大序列长度（注释掉表示不限制）
+      embedding_epochs: 15  # <recall> token训练轮数 - 降低到3轮
+      memory_epochs: 15  # 记忆解码训练轮数 - 降低到15轮
+      batch_size: 1  # 批次大小 - 降低到1
+      sft_batch_size: 1  # SFT训练的批次大小 - 默认为1，支持批量处理
+      embedding_batch_size: 4  # 批量提取向量时的batch大小（可根据GPU显存调整）
+      max_tokens_for_embedding: 32000  # 第一阶段提取记忆条目时单次聊天输入的最大token数
+      learning_rate: 1e-4  # 学习率 - 降低到5e-5
+      memory_dataset_max_length: 3000  # 第二步训练构造样本时的最大token长度
+      memory_test_max_new_tokens: 300  # 训练后测试阶段的最大生成长度
+      memory_test_sample_count: 2  # 测试阶段抽样条目数量
+      memory_test_use_cache: false  # 测试生成是否使用KV缓存（禁用可降低显存）
+      # k_folds: 4  # K折交叉验证（已移除，改为训练/验证集模式）
+
+# 日志配置
+logging:
+  level: "INFO"  # 日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL
+

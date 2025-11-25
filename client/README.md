@@ -22,11 +22,11 @@ pip install ncatbot
 
 ### 2. 配置客户端
 
-编辑 `client/qqbot_client.py`：
+编辑 `client/qqbot_client_full.py`：
 
 ```python
 # 修改服务器地址
-SERVER_URL = "http://your-server-ip:8888"  # 替换为实际服务器IP和端口
+SERVER_URL = "http://your-server-ip:9999"  # 默认端口 9999，可根据 scripts/run_server.py 的配置调整
 
 # 配置QQbot
 config.set_bot_uin("你的QQ号")
@@ -52,17 +52,19 @@ sudo firewall-cmd --reload
 在服务器上运行：
 
 ```bash
-cd /data0/user/ymdai/LLM_memory
-python server/api_server.py --host 0.0.0.0 --port 8888
+cd /data0/user/ymdai/LLM_memory/qqbot_new
+python scripts/run_server.py
 ```
+
+> 服务器监听地址与端口由 `configs/config_qwen3vl.yaml` 中的 `server.host`/`server.port` 控制，默认 `0.0.0.0:9999`。
 
 ### 5. 启动客户端
 
 在个人电脑上运行：
 
 ```bash
-# 确保napcat已启动（本地）
-python client/qqbot_client.py
+# 确保 napcat 已启动（本地）
+python client/qqbot_client_full.py
 ```
 
 ## 架构说明

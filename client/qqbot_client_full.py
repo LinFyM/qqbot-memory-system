@@ -38,7 +38,7 @@ API_KEY = None  # ← 如果使用安全版，例如: "my-secret-key-123"
 # API超时时间（秒）
 # 注意：如果模型生成需要较长时间，可能需要增加这个值
 # 考虑到多条消息排队的情况，设置为120秒（2分钟）
-API_TIMEOUT = 120
+API_TIMEOUT = 600
 # ===============================
 
 # ========== 创建 BotClient ==========
@@ -50,7 +50,7 @@ _latest_message_token: Dict[str, int] = {}
 _message_token_counter = count(start=1)
 
 # 线程池用于异步处理消息，避免阻塞NcatBot的事件线程
-_max_message_workers = max(8, (os.cpu_count() or 4) * 4)
+_max_message_workers = max(20, (os.cpu_count() or 4) * 4)
 _message_executor = ThreadPoolExecutor(max_workers=_max_message_workers)
 _log.info(f"消息处理线程池已初始化，线程数: {_max_message_workers}")
 
@@ -360,7 +360,7 @@ def _is_still_latest_message(chat_type: str, chat_id: str, token: int) -> bool:
 last_heartbeat_time = None
 heartbeat_lock = threading.Lock()
 # 心跳超时时间（秒），如果超过这个时间没收到心跳，认为连接可能有问题
-HEARTBEAT_TIMEOUT = 120  # 2分钟
+HEARTBEAT_TIMEOUT = 600  # 2分钟
 # 连接状态检查间隔（秒）
 CONNECTION_CHECK_INTERVAL = 30  # 30秒检查一次
 
@@ -368,23 +368,23 @@ CONNECTION_CHECK_INTERVAL = 30  # 30秒检查一次
 def _call_server_api_sync(endpoint: str, data: Optional[Dict[str, Any]] = None, files: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """
     调用服务器API
-    
+
     Args:
         endpoint: API端点，如 "/api/chat/group" 或 "/api/chat/private"
         data: 请求数据字典（JSON格式）
         files: 文件字典（multipart/form-data格式）
-    
+
     Returns:
         API响应字典，如果失败返回None
     """
     try:
         url = f"{SERVER_URL}{endpoint}"
-        
+
         # 构建请求头
         headers = {}
         if API_KEY:
             headers["X-API-Key"] = API_KEY
-        
+
         # 发送请求
         if files:
             # 文件上传请求
@@ -398,12 +398,12 @@ def _call_server_api_sync(endpoint: str, data: Optional[Dict[str, Any]] = None, 
         else:
             # JSON请求
             headers["Content-Type"] = "application/json"
-        response = requests.post(
-            url,
-            json=data,
-            headers=headers,
-            timeout=API_TIMEOUT
-        )
+            response = requests.post(
+                url,
+                json=data,
+                headers=headers,
+                timeout=API_TIMEOUT
+            )
         
         # 检查响应状态
         if response.status_code == 401:
@@ -489,37 +489,37 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
     video_urls: List[str] = []
 
     try:
-            if images:
-                content = re.sub(r'\[CQ:image[^\]]*\]', '', content).strip()
-                _log.info(f"✅ 已移除CQ图片码，清理后的content: {content}")
+        if images:
+            content = re.sub(r'\[CQ:image[^\]]*\]', '', content).strip()
+            _log.info(f"✅ 已移除CQ图片码，清理后的content: {content}")
         for img in images or []:
             temp_dir = None
             img_path = None
             try:
-                    temp_dir = tempfile.mkdtemp()
-                    img_path = img.download_sync(temp_dir)
-                    if img_path and os.path.exists(img_path):
-                        with open(img_path, 'rb') as f:
-                            img_bytes = f.read()
-                            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-                        img_ext = os.path.splitext(img_path)[1].lower()
+                temp_dir = tempfile.mkdtemp()
+                img_path = img.download_sync(temp_dir)
+                if img_path and os.path.exists(img_path):
+                    with open(img_path, 'rb') as f:
+                        img_bytes = f.read()
+                        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    img_ext = os.path.splitext(img_path)[1].lower()
                     img_format = img_ext[1:] if img_ext else 'jpeg'
-                        if img_format not in ['jpeg', 'jpg', 'png', 'gif', 'webp']:
+                    if img_format not in ['jpeg', 'jpg', 'png', 'gif', 'webp']:
                         img_format = 'jpeg'
                     upload_result = _call_server_api_sync("/api/upload/image", {
-                            "data": img_base64,
-                            "format": img_format
-                        })
-                        if upload_result and upload_result.get("status") == "success":
-                            img_url = upload_result.get("url", "")
-                            if img_url:
-                                image_urls.append(img_url)
-                                _log.info(f"✅ 图片已上传，获取URL: {img_url}")
-                            else:
-                                _log.warning("图片上传成功但未返回URL")
+                        "data": img_base64,
+                        "format": img_format
+                    })
+                    if upload_result and upload_result.get("status") == "success":
+                        img_url = upload_result.get("url", "")
+                        if img_url:
+                            image_urls.append(img_url)
+                            _log.info(f"✅ 图片已上传，获取URL: {img_url}")
                         else:
-                            error_msg = upload_result.get("message", "未知错误") if upload_result else "无响应"
-                            _log.warning(f"图片上传失败: {error_msg}")
+                            _log.warning("图片上传成功但未返回URL")
+                    else:
+                        error_msg = upload_result.get("message", "未知错误") if upload_result else "无响应"
+                        _log.warning(f"图片上传失败: {error_msg}")
                 else:
                     _log.warning(f"图片下载失败或路径不存在: {img_path}")
             except Exception as e:  # noqa: BLE001
@@ -527,11 +527,11 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
             finally:
                 try:
                     if img_path and os.path.exists(img_path):
-                            os.remove(img_path)
+                        os.remove(img_path)
                     if temp_dir and os.path.isdir(temp_dir):
-                            os.rmdir(temp_dir)
+                        os.rmdir(temp_dir)
                 except Exception:
-                            pass
+                    pass
     except Exception as e:  # noqa: BLE001
         _log.warning(f"提取图片信息失败: {e}", exc_info=True)
     
@@ -628,7 +628,7 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
                     _log.warning(f"处理本地视频失败: {ve}", exc_info=True)
             else:
                 _log.warning(f"视频路径不存在或不可访问: {src_norm}")
-                except Exception as e:
+    except Exception as e:
         _log.error(f"❌ 提取视频信息失败: {e}", exc_info=True)
     finally:
         _log.info(f"✅ 视频处理完成，最终video_urls数量: {len(video_urls)}")
@@ -639,25 +639,25 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
     if video_urls:
         preview += f" [包含{len(video_urls)}个视频]"
     _log.info(f"收到群消息 [群:{group_id}({group_name})] [用户:{user_id}({user_card})]: {preview}")
-        
-        request_data = {
-            "type": "group",
-            "group_id": group_id,
+    
+    request_data = {
+        "type": "group",
+        "group_id": group_id,
         "group_name": group_name,
-            "user_id": user_id,
-            "user_nickname": user_nickname,
-            "user_card": user_card,
-            "content": content,
+        "user_id": user_id,
+        "user_nickname": user_nickname,
+        "user_card": user_card,
+        "content": content,
         "image_urls": image_urls,
         "video_urls": video_urls,
-            "timestamp": timestamp
-        }
-        
+        "timestamp": timestamp
+    }
+    
     result = _call_server_api_sync("/api/chat/group", request_data)
-        
-        if result and result.get("status") == "success":
-            should_reply = result.get("should_reply", False)
-                reply = result.get("reply", "")
+    
+    if result and result.get("status") == "success":
+        should_reply = result.get("should_reply", False)
+        reply = result.get("reply", "")
         actions = result.get("actions") or []
 
         if should_reply and reply:
@@ -666,7 +666,7 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
                 return
             try:
                 bot.api.post_group_msg_sync(group_id, text=reply)
-                        _log.info(f"已发送群 {group_id} 的回复（普通消息）")
+                _log.info(f"已发送群 {group_id} 的回复（普通消息）")
             except Exception as e:  # noqa: BLE001
                 _log.error(f"发送群聊回复失败: {e}", exc_info=True)
         # 即使没有文本回复，也可以执行动作（若仍是最新消息）
@@ -675,9 +675,9 @@ def _process_group_message_task(payload: Dict[str, Any]) -> None:
             return
         try:
             _execute_group_actions(group_id, actions)
-                    except Exception as e:
+        except Exception as e:
             _log.warning(f"执行群动作失败: {e}")
-            else:
+    else:
         if result and result.get("status") == "error":
             error_msg = result.get("message", "未知错误")
             _log.error(f"服务器返回错误: {error_msg}")
@@ -703,37 +703,37 @@ def _process_private_message_task(payload: Dict[str, Any]) -> None:
     video_urls: List[str] = []
 
     try:
-            if images:
-                content = re.sub(r'\[CQ:image[^\]]*\]', '', content).strip()
-                _log.info(f"✅ 已移除CQ图片码，清理后的content: {content}")
+        if images:
+            content = re.sub(r'\[CQ:image[^\]]*\]', '', content).strip()
+            _log.info(f"✅ 已移除CQ图片码，清理后的content: {content}")
         for img in images or []:
             temp_dir = None
             img_path = None
             try:
-                    temp_dir = tempfile.mkdtemp()
-                    img_path = img.download_sync(temp_dir)
-                    if img_path and os.path.exists(img_path):
-                        with open(img_path, 'rb') as f:
-                            img_bytes = f.read()
-                            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-                        img_ext = os.path.splitext(img_path)[1].lower()
+                temp_dir = tempfile.mkdtemp()
+                img_path = img.download_sync(temp_dir)
+                if img_path and os.path.exists(img_path):
+                    with open(img_path, 'rb') as f:
+                        img_bytes = f.read()
+                        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    img_ext = os.path.splitext(img_path)[1].lower()
                     img_format = img_ext[1:] if img_ext else 'jpeg'
-                        if img_format not in ['jpeg', 'jpg', 'png', 'gif', 'webp']:
+                    if img_format not in ['jpeg', 'jpg', 'png', 'gif', 'webp']:
                         img_format = 'jpeg'
                     upload_result = _call_server_api_sync("/api/upload/image", {
-                            "data": img_base64,
-                            "format": img_format
-                        })
-                        if upload_result and upload_result.get("status") == "success":
-                            img_url = upload_result.get("url", "")
-                            if img_url:
-                                image_urls.append(img_url)
-                                _log.info(f"✅ 图片已上传，获取URL: {img_url}")
-                            else:
-                                _log.warning("图片上传成功但未返回URL")
+                        "data": img_base64,
+                        "format": img_format
+                    })
+                    if upload_result and upload_result.get("status") == "success":
+                        img_url = upload_result.get("url", "")
+                        if img_url:
+                            image_urls.append(img_url)
+                            _log.info(f"✅ 图片已上传，获取URL: {img_url}")
                         else:
-                            error_msg = upload_result.get("message", "未知错误") if upload_result else "无响应"
-                            _log.warning(f"图片上传失败: {error_msg}")
+                            _log.warning("图片上传成功但未返回URL")
+                    else:
+                        error_msg = upload_result.get("message", "未知错误") if upload_result else "无响应"
+                        _log.warning(f"图片上传失败: {error_msg}")
                 else:
                     _log.warning(f"图片下载失败或路径不存在: {img_path}")
             except Exception as e:  # noqa: BLE001
@@ -741,11 +741,11 @@ def _process_private_message_task(payload: Dict[str, Any]) -> None:
             finally:
                 try:
                     if img_path and os.path.exists(img_path):
-                            os.remove(img_path)
+                        os.remove(img_path)
                     if temp_dir and os.path.isdir(temp_dir):
-                            os.rmdir(temp_dir)
+                        os.rmdir(temp_dir)
                 except Exception:
-                            pass
+                    pass
     except Exception as e:  # noqa: BLE001
         _log.warning(f"提取图片信息失败: {e}", exc_info=True)
     
@@ -842,7 +842,7 @@ def _process_private_message_task(payload: Dict[str, Any]) -> None:
                     _log.warning(f"处理本地视频失败: {ve}", exc_info=True)
             else:
                 _log.warning(f"视频路径不存在或不可访问: {src_norm}")
-                except Exception as e:
+    except Exception as e:
         _log.error(f"❌ 提取视频信息失败: {e}", exc_info=True)
     finally:
         _log.info(f"✅ 视频处理完成，最终video_urls数量: {len(video_urls)}")
@@ -853,29 +853,29 @@ def _process_private_message_task(payload: Dict[str, Any]) -> None:
     if video_urls:
         preview += f" [包含{len(video_urls)}个视频]"
     _log.info(f"收到私聊消息 [用户:{user_id}({user_nickname})]: {preview}")
-        
-        request_data = {
-            "type": "private",
-            "user_id": user_id,
-            "user_nickname": user_nickname,
-            "content": content,
+    
+    request_data = {
+        "type": "private",
+        "user_id": user_id,
+        "user_nickname": user_nickname,
+        "content": content,
         "image_urls": image_urls,
         "video_urls": video_urls,
-            "timestamp": timestamp
-        }
-        
+        "timestamp": timestamp
+    }
+    
     result = _call_server_api_sync("/api/chat/private", request_data)
-        
-        if result and result.get("status") == "success":
-            reply = result.get("reply", "")
+    
+    if result and result.get("status") == "success":
+        reply = result.get("reply", "")
         actions = result.get("actions") or []
-            if reply:
+        if reply:
             if not _is_still_latest_message("private", user_id, message_token):
                 _log.info(f"私聊 {user_id} 在回复生成期间出现更新消息，跳过过期回复发送")
                 return
-                try:
+            try:
                 bot.api.post_private_msg_sync(user_id, text=reply)
-                    _log.info(f"已发送私聊 {user_id} 的回复（普通消息）")
+                _log.info(f"已发送私聊 {user_id} 的回复（普通消息）")
             except Exception as e:  # noqa: BLE001
                 _log.error(f"发送私聊回复失败: {e}", exc_info=True)
         # 执行动作（即使无文本回复）
@@ -884,9 +884,9 @@ def _process_private_message_task(payload: Dict[str, Any]) -> None:
             return
         try:
             _execute_private_actions(user_id, actions)
-                except Exception as e:
+        except Exception as e:
             _log.warning(f"执行私聊动作失败: {e}")
-            else:
+    else:
         if result and result.get("status") == "error":
             error_msg = result.get("message", "未知错误")
             _log.error(f"服务器返回错误: {error_msg}")
@@ -1107,7 +1107,7 @@ if __name__ == "__main__":
     print("=" * 60)
     
     try:
-        bot.run()
+        bot.run(enable_webui_interaction=False)
     except KeyboardInterrupt:
         print("\n正在关闭客户端...")
         _log.info("客户端已关闭")

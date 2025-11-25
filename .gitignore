@@ -44,6 +44,16 @@ models/
 *.ckpt
 *.h5
 
+# 上传目录中的媒体
+uploads/
+
+# 数据目录仅保留说明文件
+data/*
+!data/README.md
+
+# 体积巨大的原始SFT数据
+data/Chinese-Qwen3-235B-Thinking-2507-Distill-data-110k-SFT/
+
 # 训练相关的大文件
 server/models/trained/
 server/models/token_added/
@@ -98,6 +108,8 @@ run.txt  # 包含敏感信息（服务器地址等），已忽略
 # 老版本代码文件夹（手动保存的版本）
 萝卜子v4.0/
 萝卜子正式版v1.0/
+萝卜子正式版v1.1/
+萝卜子正式版v1.2/
 
 # Git相关说明文档（个人使用，不纳入项目）
 GIT_*.md
