@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 import os
 import logging
+import signal
+import threading
 
 
 def _setup_logging():
@@ -63,8 +65,28 @@ def main():
         print("按 Ctrl+C 停止服务器")
         print("=" * 60)
 
-        # 启动服务器
-        app.run(host=host, port=port, debug=False, threaded=True)
+        # 设置信号处理器，确保Ctrl+C能正确退出
+        def signal_handler(signum, frame):
+            """处理SIGINT和SIGTERM信号"""
+            print(f"\n收到信号 {signum}，正在退出...")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            # 直接退出，不执行清理代码（避免阻塞）
+            os._exit(0)
+        
+        # 注册信号处理器（必须在主线程中注册）
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # 启动服务器（使用use_reloader=False避免自动重载导致的问题）
+        try:
+            app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
+        except KeyboardInterrupt:
+            # 如果收到KeyboardInterrupt，直接退出
+            print("\n收到KeyboardInterrupt，正在退出...")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
 
     except Exception as e:
         print(f"❌ 服务器启动失败: {e}")
