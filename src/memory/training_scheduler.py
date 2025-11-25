@@ -223,14 +223,13 @@ class MemoryTrainingScheduler:
                 env = os.environ.copy()
                 # 确保新进程的PYTHONPATH包含项目根和src
                 py_paths = [
-                    str(project_root) if project_root else "",
-                    os.path.join(str(project_root), "src") if project_root else "",
+                    project_root,
+                    os.path.join(project_root, "src"),
                     env.get("PYTHONPATH", "")
                 ]
                 env["PYTHONPATH"] = os.pathsep.join([p for p in py_paths if p])
                 
                 # 启动新进程（不等待完成）
-                # 使用独立的文件描述符，避免继承旧进程的stdout/stderr导致的问题
                 new_process = subprocess.Popen(
                     args,
                     cwd=project_root if project_root and os.path.exists(project_root) else None,
@@ -247,10 +246,10 @@ class MemoryTrainingScheduler:
                 os.execv(python_exe, args)
                 return
             
-            # 等待足够的时间，确保新进程已经开始启动并绑定端口
+            # 等待足够的时间，确保新进程已经开始启动
             # 同时给旧进程一些时间释放资源（虽然 os._exit 会立即释放）
-            _log.info("等待新进程启动并绑定端口...")
-            time.sleep(3.0)  # 增加等待时间，确保新进程完全启动
+            _log.info("等待新进程启动...")
+            time.sleep(2.0)
             
             # 强制退出当前进程（不执行清理代码，确保立即退出）
             _log.info("旧进程即将退出，释放端口和资源...")
