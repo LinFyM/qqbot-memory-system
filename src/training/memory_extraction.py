@@ -453,39 +453,58 @@ def extract_sft_vectors_for_recall_training(
             _log.warning("⚠️ 无法加载SFT数据集，跳过SFT向量提取")
             return None
 
-        if len(sft_samples) >= required_sft_count:
-            selected_samples = random.sample(sft_samples, required_sft_count)
-        else:
-            _log.warning(f"⚠️ SFT数据集样本数 {len(sft_samples)} 少于所需数量 {required_sft_count}，使用全部样本")
-            selected_samples = sft_samples
-
+        max_tokens = int(service.training_config.get("sft_max_tokens") or 0)
+        tokenizer = service._get_base_tokenizer(processor)
         sft_thinking_texts = []
-        for sample in selected_samples:
+        random.shuffle(sft_samples)
+        processed = 0
+        for sample in sft_samples:
             messages = _standardize_sft_messages(self, sample)
-            if messages:
-                try:
-                    full_text = processor.apply_chat_template(
-                        messages,
-                        tokenize=False,
-                        add_generation_prompt=False
-                    )
+            if not messages:
+                continue
+            processed += 1
+            try:
+                full_text = processor.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=False
+                )
 
-                    start_tag = "<think>"
-                    end_tag = "</think>"
-                    start_idx = full_text.find(start_tag)
-                    end_idx = full_text.find(end_tag)
+                start_tag = "<think>"
+                end_tag = "</think>"
+                start_idx = full_text.find(start_tag)
+                end_idx = full_text.find(end_tag)
 
-                    if start_idx != -1 and end_idx != -1:
-                        thinking_content = full_text[start_idx + len(start_tag):end_idx].strip()
-                        if thinking_content:
-                            sft_thinking_texts.append(thinking_content)
-                except Exception as e:
-                    _log.debug(f"处理SFT样本失败: {e}")
-                    continue
+                if start_idx != -1 and end_idx != -1:
+                    thinking_content = full_text[start_idx + len(start_tag):end_idx].strip()
+                    if not thinking_content:
+                        continue
+                    if max_tokens:
+                        encoded = tokenizer(
+                            thinking_content,
+                            return_tensors="pt",
+                            add_special_tokens=True,
+                            padding=False,
+                            truncation=False
+                        )
+                        if encoded["input_ids"].shape[1] > max_tokens:
+                            continue
+                    sft_thinking_texts.append(thinking_content)
+            except Exception as e:
+                _log.debug(f"处理SFT样本失败: {e}")
+                continue
+            if len(sft_thinking_texts) >= required_sft_count:
+                break
 
         if not sft_thinking_texts:
             _log.warning("⚠️ 没有找到有效的SFT思考内容，跳过SFT向量提取")
             return None
+
+        if len(sft_thinking_texts) < required_sft_count:
+            raise ValueError(
+                f"SFT思考样本不足：需要 {required_sft_count} 条满足token限制的thinking段，"
+                f"但仅收集到 {len(sft_thinking_texts)} 条。"
+            )
 
         _log.info(f"✅ 提取到 {len(sft_thinking_texts)} 个SFT思考内容")
 
@@ -497,7 +516,7 @@ def extract_sft_vectors_for_recall_training(
             self.training_config.get("max_tokens_for_embedding", 35000)
         )
 
-        if not sft_embeddings:
+        if not sft_embeddings or len(sft_embeddings) < required_sft_count:
             _log.warning("⚠️ SFT向量提取失败")
             return None
 
