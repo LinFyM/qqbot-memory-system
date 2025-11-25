@@ -214,35 +214,53 @@ class MemoryTrainingScheduler:
                 _log.info(f"切换到项目根目录: {project_root}")
             
             _log.info(f"启动新进程: {' '.join(args)}")
-            _log.info("使用 os.execv 原地替换进程（保持文件描述符和会话）...")
+            _log.info("旧进程将在新进程启动后退出...")
             
-            # 设置环境变量，确保新进程使用正确的环境
-            env = os.environ.copy()
-            # 确保新进程的PYTHONPATH包含项目根和src
-            py_paths = [
-                str(project_root) if project_root else "",
-                os.path.join(str(project_root), "src") if project_root else "",
-                env.get("PYTHONPATH", "")
-            ]
-            env["PYTHONPATH"] = os.pathsep.join([p for p in py_paths if p])
+            # 在后台启动新进程
+            # 使用 subprocess.Popen 启动新进程，让新进程独立运行
+            try:
+                # 设置环境变量，确保新进程使用正确的环境
+                env = os.environ.copy()
+                # 确保新进程的PYTHONPATH包含项目根和src
+                py_paths = [
+                    str(project_root) if project_root else "",
+                    os.path.join(str(project_root), "src") if project_root else "",
+                    env.get("PYTHONPATH", "")
+                ]
+                env["PYTHONPATH"] = os.pathsep.join([p for p in py_paths if p])
+                
+                # 启动新进程（不等待完成）
+                # 使用独立的文件描述符，避免继承旧进程的stdout/stderr导致的问题
+                new_process = subprocess.Popen(
+                    args,
+                    cwd=project_root if project_root and os.path.exists(project_root) else None,
+                    env=env,
+                    stdout=sys.stdout,  # 继承标准输出
+                    stderr=sys.stderr,  # 继承标准错误
+                    start_new_session=True  # 创建新的会话，让新进程独立
+                )
+                _log.info(f"✅ 新进程已启动 (PID: {new_process.pid})")
+            except Exception as start_error:
+                _log.error(f"❌ 启动新进程失败: {start_error}", exc_info=True)
+                _log.error("将尝试使用 os.execv 原地替换进程...")
+                # 如果 subprocess 失败，回退到 os.execv
+                os.execv(python_exe, args)
+                return
             
-            # 更新当前进程的环境变量
-            for key, value in env.items():
-                os.environ[key] = value
+            # 等待足够的时间，确保新进程已经开始启动并绑定端口
+            # 同时给旧进程一些时间释放资源（虽然 os._exit 会立即释放）
+            _log.info("等待新进程启动并绑定端口...")
+            time.sleep(3.0)  # 增加等待时间，确保新进程完全启动
             
-            # 刷新所有输出，确保日志被写入
+            # 强制退出当前进程（不执行清理代码，确保立即退出）
+            _log.info("旧进程即将退出，释放端口和资源...")
             sys.stdout.flush()
             sys.stderr.flush()
             
-            # 使用 os.execv 原地替换进程
-            # 这样可以确保：
-            # 1. 新进程完全替换旧进程，不会有文件描述符问题
-            # 2. 新进程继承当前进程的所有资源（包括文件描述符、会话等）
-            # 3. 不会有端口冲突问题（因为进程被替换，而不是创建新进程）
-            # 注意：os.execv 不会返回，它会直接替换当前进程
-            _log.info("✅ 正在替换进程...")
-            os.execv(python_exe, args)
-            # 这行代码永远不会执行，因为 os.execv 会替换进程
+            # 使用 os._exit() 强制退出，不执行任何清理代码
+            # 这样可以确保端口立即释放，新进程可以绑定端口
+            # os._exit() 会立即终止进程，包括所有线程和 Flask 服务器
+            os._exit(0)
             
         except Exception as e:
             _log.error(f"❌ 重启服务器失败: {e}", exc_info=True)
