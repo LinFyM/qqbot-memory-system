@@ -1883,6 +1883,7 @@ class MemoryTrainingService:
                 selected_indices = random.sample(eligible_indices, required_sft_count)
                 selected_sft_texts = [sft_texts[i] for i in selected_indices]
                 selected_sft_embeddings = sft_embeddings[selected_indices]
+                actual_sft_count = len(selected_sft_texts)
 
                 # 合并数据
                 combined_texts = memory_texts + selected_sft_texts

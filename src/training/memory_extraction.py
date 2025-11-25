@@ -456,6 +456,7 @@ def extract_sft_vectors_for_recall_training(
         max_tokens = int(service.training_config.get("sft_max_tokens") or 0)
         tokenizer = service._get_base_tokenizer(processor)
         sft_thinking_texts = []
+        collected = 0
         random.shuffle(sft_samples)
         processed = 0
         for sample in sft_samples:
@@ -490,10 +491,11 @@ def extract_sft_vectors_for_recall_training(
                         if encoded["input_ids"].shape[1] > max_tokens:
                             continue
                     sft_thinking_texts.append(thinking_content)
+                    collected += 1
             except Exception as e:
                 _log.debug(f"处理SFT样本失败: {e}")
                 continue
-            if len(sft_thinking_texts) >= required_sft_count:
+            if collected >= required_sft_count:
                 break
 
         if not sft_thinking_texts:
