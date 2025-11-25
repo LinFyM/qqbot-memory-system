@@ -1007,9 +1007,9 @@ class MemoryTrainingService:
         model_path: str,
         pure_target: int,
         full_target: int
-    ) -> Tuple[List[Dict[str, Any]], List[List[Dict[str, Any]]]]:
+    ) -> Tuple[List[Dict[str, Any]], List[List[Dict[str, Any]]], List[int], List[int]]:
         if not self.sft_enabled or not self.sft_path or (pure_target <= 0 and full_target <= 0):
-            return [], []
+            return [], [], [], []
         from transformers import AutoProcessor
         processor = AutoProcessor.from_pretrained(
             model_path,
@@ -1020,12 +1020,13 @@ class MemoryTrainingService:
         if not sft_samples:
             raise ValueError("未找到可用的SFT数据集，请确认路径配置。")
         sft_max_tokens = int(self.training_config.get("sft_max_tokens") or 0)
-        random.shuffle(sft_samples)
-        sft_messages_list: List[List[Dict[str, Any]]] = []
-        sft_full_texts: List[Dict[str, Any]] = []
+        valid_sft_messages: List[List[Dict[str, Any]]] = []
+        valid_sft_full_texts: List[Dict[str, Any]] = []
+        sft_message_source_indices: List[int] = []
+        sft_full_source_indices: List[int] = []
         skipped_long = 0
         processed = 0
-        for sample in sft_samples:
+        for sample_idx, sample in enumerate(sft_samples):
             messages = self._standardize_sft_messages(sample)
             if not messages:
                 continue
@@ -1041,7 +1042,8 @@ class MemoryTrainingService:
                 if not within_limit:
                     skipped_long += 1
                     continue
-            sft_messages_list.append(messages)
+            valid_sft_messages.append(messages)
+            sft_message_source_indices.append(sample_idx)
             try:
                 full_text = processor.apply_chat_template(
                     messages,
@@ -1053,30 +1055,29 @@ class MemoryTrainingService:
                 start_idx = full_text.find(start_tag)
                 end_idx = full_text.find(end_tag)
                 if start_idx != -1 and end_idx != -1:
-                    sft_full_texts.append({
+                    valid_sft_full_texts.append({
                         "full_text": full_text,
                         "thinking_start": start_idx,
                         "thinking_end": end_idx + len(end_tag)
                     })
+                    sft_full_source_indices.append(sample_idx)
             except Exception as e:
                 _log.debug(f"处理SFT样本失败: {e}")
                 pass
-            if len(sft_messages_list) >= pure_target and len(sft_full_texts) >= full_target:
-                break
         if skipped_long:
             _log.info(
                 f"⚠️ SFT样本长度限制：跳过 {skipped_long} 条超过 {sft_max_tokens} tokens 的样本"
             )
-        if len(sft_messages_list) < pure_target or len(sft_full_texts) < full_target:
+        if len(valid_sft_messages) < pure_target or len(valid_sft_full_texts) < full_target:
             raise ValueError(
-                f"SFT长度过滤后数量不足：纯SFT需要 {pure_target} 条（当前 {len(sft_messages_list)} 条），"
-                f"夹心需要 {full_target} 条（当前 {len(sft_full_texts)} 条）。"
+                f"SFT长度过滤后数量不足：纯SFT需要 {pure_target} 条（当前 {len(valid_sft_messages)} 条），"
+                f"夹心需要 {full_target} 条（当前 {len(valid_sft_full_texts)} 条）。"
             )
         _log.info(
-            f"✅ SFT抽样完成：纯SFT {len(sft_messages_list)} 条，夹心用 {len(sft_full_texts)} 条，"
+            f"✅ SFT筛选完成：纯SFT候选 {len(valid_sft_messages)} 条，夹心候选 {len(valid_sft_full_texts)} 条，"
             f"共处理 {processed} 条原始样本。"
         )
-        return sft_full_texts, sft_messages_list
+        return valid_sft_full_texts, valid_sft_messages, sft_full_source_indices, sft_message_source_indices
     
     def _build_simple_sft_batch(self, processor, messages: List[List[Dict[str, Any]]]):
         """
@@ -2069,10 +2070,17 @@ class MemoryTrainingService:
             self._current_epoch_sample_n = len(memory_texts)
             sft_full_texts = []
             sft_messages_list = []
+            sft_full_source_indices = []
+            sft_message_source_indices = []
             if memory_texts:
                 pure_target = max(1, len(memory_texts) // 2)
                 full_target = len(memory_texts) // 2
-                sft_full_texts, sft_messages_list = self._load_sft_messages_with_target(
+                (
+                    sft_full_texts,
+                    sft_messages_list,
+                    sft_full_source_indices,
+                    sft_message_source_indices
+                ) = self._load_sft_messages_with_target(
                     model_path,
                     pure_target,
                     full_target
@@ -2101,7 +2109,9 @@ class MemoryTrainingService:
                 noise_std=0.01,
                 save_path=step2_save_path,
                 sft_full_texts=sft_full_texts if sft_full_texts else None,
-                sft_messages_list=sft_messages_list if sft_messages_list else None
+                sft_messages_list=sft_messages_list if sft_messages_list else None,
+                sft_full_source_indices=sft_full_source_indices if sft_full_source_indices else None,
+                sft_message_source_indices=sft_message_source_indices if sft_message_source_indices else None
             )
             _ = res2
 

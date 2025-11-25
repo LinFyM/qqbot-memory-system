@@ -519,16 +519,29 @@ class MixedMemorySFTDataset(Dataset):
         end_prompts=None,
         memory_ratio=0.5,  # 记忆条目在混合数据中的比例
         guide_text=None,
+        sft_message_source_indices=None,
+        sft_full_source_indices=None,
     ):
         self.memory_texts = memory_texts
         self.memory_embeddings = memory_embeddings
-        self.sft_messages_list = sft_messages_list
+        self.full_sft_messages_list = sft_messages_list if sft_messages_list is not None else []
+        self.sft_message_source_indices = (
+            sft_message_source_indices
+            if sft_message_source_indices is not None
+            else list(range(len(self.full_sft_messages_list)))
+        )
+        self.sft_messages_list = self.full_sft_messages_list
         self.tokenizer = tokenizer
         self.base_model = base_model
         self.max_length = max_length
         self.noise_std = noise_std
         self._is_main_process_fn = is_main_process_fn
         self.sft_full_texts = sft_full_texts if sft_full_texts is not None else []
+        self.sft_full_source_indices = (
+            sft_full_source_indices
+            if sft_full_source_indices is not None
+            else list(range(len(self.sft_full_texts)))
+        )
         self.activation_prompts = _ensure_prompt_list(activation_prompts, "activation_prompts")
         self.end_prompts = _ensure_prompt_list(end_prompts, "end_prompts")
         self.memory_ratio = memory_ratio
@@ -543,7 +556,7 @@ class MixedMemorySFTDataset(Dataset):
             max_length=max_length,
             noise_std=noise_std,
             is_main_process_fn=is_main_process_fn,
-            sft_full_texts=sft_full_texts,
+            sft_full_texts=self.sft_full_texts,
             activation_prompts=activation_prompts,
             end_prompts=end_prompts,
             guide_text=self.guide_text,
@@ -637,13 +650,25 @@ class MixedMemorySFTDataset(Dataset):
             if self.last_sft_only_indices:
                 preview = min(5, len(self.last_sft_only_indices))
                 preview_indices = sorted(self.last_sft_only_indices[:preview])
-                print(f"   📋 纯SFT样本原始索引(前{preview}条): {preview_indices}")
+                mapped = sorted(
+                    self.sft_message_source_indices[idx]
+                    if idx < len(self.sft_message_source_indices)
+                    else idx
+                    for idx in preview_indices
+                )
+                print(f"   📋 纯SFT样本原始索引(前{preview}条): {mapped}")
                 if len(self.last_sft_only_indices) > preview:
                     print(f"   ... 共 {len(self.last_sft_only_indices)} 条纯SFT样本")
             if self.last_sft_full_indices:
                 preview = min(5, len(self.last_sft_full_indices))
                 preview_indices = sorted(self.last_sft_full_indices[:preview])
-                print(f"   📋 夹心SFT样本原始索引(前{preview}条): {preview_indices}")
+                mapped = sorted(
+                    self.sft_full_source_indices[idx]
+                    if idx < len(self.sft_full_source_indices)
+                    else idx
+                    for idx in preview_indices
+                )
+                print(f"   📋 夹心SFT样本原始索引(前{preview}条): {mapped}")
                 if len(self.last_sft_full_indices) > preview:
                     print(f"   ... 共 {len(self.last_sft_full_indices)} 条夹心SFT样本")
     
@@ -1599,7 +1624,18 @@ class EnhancedTextMemoryTrainer:
         )
         return loader, dataset
     
-    def create_mixed_dataloader(self, memory_texts, memory_embeddings, sft_messages_list, batch_size=2, shuffle=True, noise_std=0.01, sft_full_texts=None):
+    def create_mixed_dataloader(
+        self,
+        memory_texts,
+        memory_embeddings,
+        sft_messages_list,
+        batch_size=2,
+        shuffle=True,
+        noise_std=0.01,
+        sft_full_texts=None,
+        sft_message_source_indices=None,
+        sft_full_source_indices=None
+    ):
         """创建混合数据加载器（记忆条目+SFT数据）"""
         dataset = MixedMemorySFTDataset(
             memory_texts,
@@ -1615,6 +1651,8 @@ class EnhancedTextMemoryTrainer:
             end_prompts=self.end_prompts,
             memory_ratio=0.5,  # 记忆条目占50%
             guide_text=self.guide_text,
+            sft_message_source_indices=sft_message_source_indices,
+            sft_full_source_indices=sft_full_source_indices
         )
         # 让 Accelerator 接管 sampler/loader
         loader = DataLoader(
@@ -2188,8 +2226,19 @@ class EnhancedTextMemoryTrainer:
         except Exception as e:
             print(f"⚠️ 清理训练器时出现警告: {e}")
 
-    def train(self, pt_file_path, num_epochs=20, batch_size=4, learning_rate=1e-4, 
-            noise_std=0.01, save_path="enhanced_memory_model", sft_full_texts=None, sft_messages_list=None):
+    def train(
+        self,
+        pt_file_path,
+        num_epochs=20,
+        batch_size=4,
+        learning_rate=1e-4,
+        noise_std=0.01,
+        save_path="enhanced_memory_model",
+        sft_full_texts=None,
+        sft_messages_list=None,
+        sft_full_source_indices=None,
+        sft_message_source_indices=None
+    ):
         """增强的训练流程 - 支持混合训练（记忆条目+SFT数据）"""
         
         if self.is_main_process():
@@ -2215,7 +2264,15 @@ class EnhancedTextMemoryTrainer:
         # 创建混合数据加载器（如果提供了SFT数据）
         if sft_messages_list and len(sft_messages_list) > 0:
             train_loader, dataset = self.create_mixed_dataloader(
-                texts, embeddings, sft_messages_list, batch_size, True, noise_std, sft_full_texts=sft_full_texts
+                texts,
+                embeddings,
+                sft_messages_list,
+                batch_size,
+                True,
+                noise_std,
+                sft_full_texts=sft_full_texts,
+                sft_message_source_indices=sft_message_source_indices,
+                sft_full_source_indices=sft_full_source_indices
             )
         else:
             # 回退到原有的数据加载器
