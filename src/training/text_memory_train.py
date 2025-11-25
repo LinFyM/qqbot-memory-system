@@ -630,16 +630,33 @@ class MixedMemorySFTDataset(Dataset):
         if memory_count > 0:
             memory_indices = list(range(memory_count))
             random.shuffle(memory_indices)
-            # 三等分记忆条目
-            third_count = memory_count // 3
-            memory_front_indices = memory_indices[:third_count]  # 前缀SFT
-            memory_full_indices = memory_indices[third_count:third_count*2]  # 夹心SFT
-            # 剩余的记忆条目也作为前缀SFT处理（如果memory_count不是3的倍数）
-            if memory_count > third_count * 2:
-                memory_front_indices.extend(memory_indices[third_count*2:])
+            
+            # 根据SFT数量分配记忆条目
+            prefix_sft_count = getattr(self, 'prefix_sft_count', 0)
+            middle_full_count = len(self.memory_dataset.sft_full_texts)
+            
+            # 计算每种类型需要的记忆条目数
+            memory_front_needed = min(prefix_sft_count, memory_count)
+            memory_full_needed = min(middle_full_count, memory_count - memory_front_needed)
+            
+            # 如果还有剩余记忆条目，优先分配给memory_full（因为夹心结构更重要）
+            remaining = memory_count - memory_front_needed - memory_full_needed
+            if remaining > 0:
+                # 如果middle_full_texts还有可用，优先分配给memory_full
+                if middle_full_count > memory_full_needed:
+                    additional_full = min(remaining, middle_full_count - memory_full_needed)
+                    memory_full_needed += additional_full
+                    remaining -= additional_full
+                # 剩余分配给memory_front
+                if remaining > 0 and prefix_sft_count > memory_front_needed:
+                    additional_front = min(remaining, prefix_sft_count - memory_front_needed)
+                    memory_front_needed += additional_front
+            
+            # 分配记忆条目索引
+            memory_front_indices = memory_indices[:memory_front_needed]
+            memory_full_indices = memory_indices[memory_front_needed:memory_front_needed + memory_full_needed]
             
             # 记忆类型A：仅前置SFT（使用prefix_messages）
-            prefix_sft_count = getattr(self, 'prefix_sft_count', 0)
             if prefix_sft_count > 0 and len(memory_front_indices) > 0:
                 prefix_sft_indices = list(range(min(prefix_sft_count, len(memory_front_indices))))
                 random.shuffle(prefix_sft_indices)
@@ -647,13 +664,12 @@ class MixedMemorySFTDataset(Dataset):
                     self.mixed_indices.append(('memory_front', mem_idx, sft_idx))
             
             # 记忆类型B：前置+后置SFT（使用middle_full_texts）
-            memory_full_count = len(memory_full_indices)
-            if len(self.memory_dataset.sft_full_texts) > 0 and memory_full_count > 0:
-                middle_sft_indices = list(range(len(self.memory_dataset.sft_full_texts)))
+            if middle_full_count > 0 and len(memory_full_indices) > 0:
+                middle_sft_indices = list(range(middle_full_count))
                 random.shuffle(middle_sft_indices)
-                for mem_idx, sft_idx in zip(memory_full_indices, middle_sft_indices[:memory_full_count]):
+                for mem_idx, sft_idx in zip(memory_full_indices, middle_sft_indices[:len(memory_full_indices)]):
                     self.mixed_indices.append(('memory_full', mem_idx, sft_idx))
-                self.last_sft_full_indices = middle_sft_indices[:memory_full_count]
+                self.last_sft_full_indices = middle_sft_indices[:len(memory_full_indices)]
             else:
                 self.last_sft_full_indices = []
             
@@ -1840,7 +1856,7 @@ class EnhancedTextMemoryTrainer:
         recall_token_count = len(recall_tokens)
         
         # 为了测试模型在真实场景下的表现，测试时也应该有上下文
-        # 使用和训练时一样的上下文处理方式：从SFT数据中随机选择并截断
+        # 使用和训练时一样的上下文处理方式：优先从SFT数据中随机选择并截断，如果没有则从记忆条目中选择
         test_context_text = ""
         
         # 如果提供了SFT数据，使用和训练时一样的截断方式
@@ -1888,6 +1904,14 @@ class EnhancedTextMemoryTrainer:
             # 使用和训练时一样的截断方法
             test_context_text, _ = temp_dataset_for_context._split_sft_at_thinking(sft_data)
         
+        # 如果没有SFT数据，从记忆条目中随机选择上下文（和训练时一样）
+        if not test_context_text and len(texts) > 1:
+            import random
+            other_indices = [i for i in range(len(texts)) if i not in test_indices]
+            if other_indices:
+                context_idx = random.choice(other_indices)
+                test_context_text = texts[context_idx]
+        
         # 测试时使用固定的激活提示语（使用第一个，确保测试一致性）
         test_activation_prompt = self.activation_prompts[0].strip() if self.activation_prompts else ""
         
@@ -1900,14 +1924,27 @@ class EnhancedTextMemoryTrainer:
         
         # 构造完整输入序列
         full_input_tokens = context_tokens + activation_tokens + core_input_tokens
+        # embedding插入位置：在<recall>之后，也就是<|memory_pad|>的位置
         embedding_position = len(context_tokens) + len(activation_tokens) + recall_token_count
+        
+        # 验证embedding位置是否正确（应该是<|memory_pad|>的位置，也就是最后一个位置）
+        expected_embedding_pos = len(full_input_tokens) - 1
+        if embedding_position != expected_embedding_pos:
+            print(f"⚠️ 警告: embedding位置计算可能有问题")
+            print(f"   计算的位置: {embedding_position}, 期望的位置（最后一个）: {expected_embedding_pos}")
+            print(f"   输入序列: {full_input_tokens}")
+            # 使用期望的位置
+            embedding_position = expected_embedding_pos
         
         print(f"📋 测试配置:")
         print(f"   上下文: {'有 (' + str(len(context_tokens)) + ' tokens)' if test_context_text else '无'}")
+        if test_context_text:
+            context_preview = test_context_text[:100] + "..." if len(test_context_text) > 100 else test_context_text
+            print(f"   上下文预览: {context_preview}")
         print(f"   激活提示语: {test_activation_prompt if test_activation_prompt else '无'}")
         print(f"   注意: 结束提示语是训练时的目标，不是输入的一部分")
         print(f"   输入序列长度: {len(full_input_tokens)}")
-        print(f"   Embedding插入位置: {embedding_position}")
+        print(f"   Embedding插入位置: {embedding_position} (最后一个位置，<|memory_pad|>的位置)")
         
         for i, idx in enumerate(test_indices):
             # 每次测试前彻底清理模型状态，确保测试独立
@@ -2375,7 +2412,10 @@ class EnhancedTextMemoryTrainer:
         for epoch in range(num_epochs):
             print(f"\nEpoch {epoch+1}/{num_epochs}")
             
-            # 每个epoch开始时，打印一个训练样本以供检查
+            # 训练一个epoch - 数据集会在train_epoch内刷新
+            epoch_results = self.train_epoch(train_loader, dataset, optimizer, epoch_idx=epoch)
+            
+            # 每个epoch训练后，打印一个训练样本以供检查（使用刷新后的数据）
             if self.is_main_process() and len(dataset) > 0:
                 try:
                     # 优先找到记忆条目样本（不是SFT样本）
@@ -2480,9 +2520,6 @@ class EnhancedTextMemoryTrainer:
                         print(f"   ⚠️ 无法获取sequence_tokens或labels，跳过完整样本显示")
                 except Exception as e:
                     print(f"⚠️ 打印训练样本失败: {e}")
-            
-            # 训练一个epoch - 数据集会在train_epoch内刷新
-            epoch_results = self.train_epoch(train_loader, dataset, optimizer, epoch_idx=epoch)
             
             # 记录历史
             training_history['total_loss'].append(epoch_results['total_loss'])
