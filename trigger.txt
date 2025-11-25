@@ -1,0 +1,2 @@
+curl -X POST http://gpu02:9999/api/training/trigger
+curl -X POST http://gpu02:9999/api/training/save-chat-history

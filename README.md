@@ -4,16 +4,23 @@
 
 ## 快速开始
 
-```bash
-# 激活conda环境
-conda activate llm
+1. 获取代码并安装依赖
+   ```bash
+   git clone https://github.com/LinFyM/Episodic-Memory-Chatbot.git
+   cd Episodic-Memory-Chatbot
 
-# 启动服务器
-cd /data0/user/ymdai/LLM_memory/qqbot_new
-python scripts/run_server.py
-```
+   # 推荐使用新的虚拟环境
+   conda create -n qqbot python=3.10 -y
+   conda activate qqbot
+   pip install -r requirements.txt
+   ```
+2. 准备配置文件（可直接编辑 `configs/config_qwen3vl.yaml` 与 `configs/prompts.yaml`）
+3. 启动服务
+   ```bash
+   python scripts/run_server.py
+   ```
 
-服务器将在 `http://0.0.0.0:9999` 启动。
+默认会监听 `configs/config_qwen3vl.yaml` 中的 `server.host`/`server.port`（初始值 `0.0.0.0:9999`）。
 
 ## 项目结构
 
