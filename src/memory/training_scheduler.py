@@ -5,11 +5,12 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 # 从新路径导入训练服务（主实现）
 from training.training_service import MemoryTrainingService
@@ -126,16 +127,42 @@ class MemoryTrainingScheduler:
                 else:
                     _log.warning(f"⚠️ 无法解析时间配置 '{schedule}'，使用默认值 3")
                     train_hour = 3
-            _log.info(f"设置训练时间：每两天 {train_hour}:00 执行一次训练")
+            
+            # 记录启动日期（只取日期部分，不考虑具体时间）
+            now = datetime.now()
+            start_date = now.date()  # 只取日期部分
+            _log.info(f"📅 进程启动日期: {start_date.strftime('%Y-%m-%d')}")
+            
+            # 计算第一次训练时间：启动日期 + 2天，在指定小时
+            first_training_date = start_date + timedelta(days=2)
+            first_training_time = datetime.combine(first_training_date, datetime.min.time()).replace(hour=train_hour, minute=0, second=0, microsecond=0)
+            
+            # 如果第一次训练时间已经过了（比如启动时间是26日23:00，第一次训练是28日03:00，但现在是29日），
+            # 需要找到下一个训练时间（启动日期+2+3n天）
+            if first_training_time <= now:
+                # 从启动日期+2天开始，每次加3天，直到找到未来的训练时间
+                days_to_add = 2
+                while True:
+                    days_to_add += 3  # 第一次已经过了，从+5天开始
+                    candidate_date = start_date + timedelta(days=days_to_add)
+                    candidate_time = datetime.combine(candidate_date, datetime.min.time()).replace(hour=train_hour, minute=0, second=0, microsecond=0)
+                    if candidate_time > now:
+                        first_training_time = candidate_time
+                        break
+            
+            _log.info(f"📅 第一次训练时间: {first_training_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            _log.info(f"⏰ 训练时间设置：从启动日期算起，每3天在 {train_hour}:00 执行一次训练")
+            
+            # 使用 IntervalTrigger，每3天执行一次，从第一次训练时间开始
             self.scheduler.add_job(
                 func=self.train_job,
-                trigger=CronTrigger(hour=train_hour, minute=0, day='*/2'),
+                trigger=IntervalTrigger(days=3, start_date=first_training_time),
                 id='memory_training',
-                name=f'记忆训练任务-{train_hour}点',
+                name=f'记忆训练任务-每3天{train_hour}点',
                 replace_existing=True
             )
             self.scheduler.start()
-            _log.info("记忆训练调度器已启动")
+            _log.info("✅ 记忆训练调度器已启动")
         except Exception as e:
             _log.error(f"启动调度器失败: {e}", exc_info=True)
             raise
