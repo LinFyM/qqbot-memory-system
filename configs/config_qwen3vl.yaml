@@ -66,13 +66,10 @@ memory:
     chat_history_storage_dir: "./models/chat_history_storage"  # 聊天记录存储目录
     auto_restart_after_training: true  # 训练完成后是否自动重启（true/false）
     restart_mode: "restart_server"  # 重启模式："reload_model"（仅重新加载模型，训练时不可用）或 "restart_server"（完整重启服务器，推荐）
-    # 通用SFT配置（按epoch穿插）
+    # 通用SFT配置
     sft:
       enabled: true
       dataset_path: "./data/Chinese-Qwen3-235B-Thinking-2507-Distill-data-110k-SFT/qwen3_235b_thinking_2507_distill_110k.jsonl"  # 支持相对项目根路径
-      per_epoch: true
-      max_per_epoch: null   # 每次插入SFT的最大样本数上限（可按需调大/小）
-      seed: 42
     # 导出配置：确保VL资产完整
     export:
       save_full_vl_assets: true
@@ -87,19 +84,18 @@ memory:
       step2_lora_target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     training_config:
       # max_length_recall_training: null  # 第一步训练的最大序列长度（注释掉表示不限制）
-      embedding_epochs: 30  # <recall> token训练轮数 - 降低到3轮
-      memory_epochs: 30  # 记忆解码训练轮数 - 降低到15轮
+      embedding_epochs: 35  # <recall> token训练轮数 - 降低到3轮
+      memory_epochs: 35  # 记忆解码训练轮数 - 降低到15轮
       batch_size: 1  # 批次大小 - 降低到1
       sft_batch_size: 1  # SFT训练的批次大小 - 默认为1，支持批量处理
       embedding_batch_size: 4  # 批量提取向量时的batch大小（可根据GPU显存调整）
       max_tokens_for_embedding: 25000  # 第一阶段提取记忆条目时单次聊天输入的最大token数
-      sft_max_tokens: 3000  # 参与混合或SFT训练的样本最大token数，超出将被跳过
+      sft_max_tokens: 2500  # 参与混合或SFT训练的样本最大token数，超出将被跳过
       learning_rate: 5e-5  # 学习率 - 降低到5e-5
-      memory_dataset_max_length: 4000  # 第二步训练构造样本时的最大token长度
+      memory_dataset_max_length: 3000  # 第二步训练构造样本时的最大token长度
       memory_test_max_new_tokens: 300  # 训练后测试阶段的最大生成长度
       memory_test_sample_count: 2  # 测试阶段抽样条目数量
       memory_test_use_cache: false  # 测试生成是否使用KV缓存（禁用可降低显存）
-      # k_folds: 4  # K折交叉验证（已移除，改为训练/验证集模式）
 
 # 日志配置
 logging:

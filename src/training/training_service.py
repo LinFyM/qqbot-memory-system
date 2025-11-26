@@ -511,9 +511,6 @@ class MemoryTrainingService:
         sft_cfg = self.memory_config.get("sft", {})
         self.sft_enabled = bool(sft_cfg.get("enabled", False))
         self.sft_path = sft_cfg.get("dataset_path")
-        self.sft_per_epoch = bool(sft_cfg.get("per_epoch", True))
-        self.sft_max_per_epoch = sft_cfg.get("max_per_epoch") or None
-        self.sft_seed = int(sft_cfg.get("seed", 42))
         export_cfg = self.memory_config.get("export", {})
         self.export_save_full_vl_assets = bool(export_cfg.get("save_full_vl_assets", True))
         self.export_merge_lora = bool(export_cfg.get("merge_lora", True))
