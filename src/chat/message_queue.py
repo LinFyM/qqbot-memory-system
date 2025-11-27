@@ -338,7 +338,7 @@ def process_message_task(
                     _log.warning(f"⚠️ 聊天 {chat_id} 的任务在生成前检测到中断信号，清除后继续")
                     interrupt_event.clear()
             
-            # 截断历史（仅用于生成，不回写）
+            # 截断历史（基于token数，截断后会更新内存中的历史）
             chat_context = {}
             if chat_type == "group":
                 chat_context = {"group_id": chat_id, "group_name": group_name or chat_id}
@@ -368,6 +368,10 @@ def process_message_task(
             )
             if len(generation_history) < original_history_len:
                 _log.info(f"✂️ 历史截断: {original_history_len} -> {len(generation_history)}（{chat_type} {chat_id}）")
+                # 更新内存中的历史，移除被截断的消息
+                with chat_history_lock:
+                    set_chat_history(chat_type, chat_id, generation_history)
+                    _log.info(f"💾 已更新内存中的历史，移除 {original_history_len - len(generation_history)} 条消息（{chat_type} {chat_id}）")
             else:
                 _log.info(f"📏 历史长度 {len(generation_history)}，未超过上限（{chat_type} {chat_id}）")
             
