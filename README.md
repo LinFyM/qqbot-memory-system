@@ -1,4 +1,4 @@
-# 萝卜子QQ机器人 v2.1
+# 萝卜子QQ机器人 v2.2
 
 基于Qwen3-VL的多模态QQ机器人，支持记忆机制和持续学习。
 
@@ -59,7 +59,10 @@ memory:
   memory_db_path: "./models/memory_db/memory_embeddings.pt"
   training:
     enabled: true
-    schedule: "3"  # 凌晨3点自动训练
+    schedule: "2"  # 训练时间：凌晨2点
+    first_training_delay_days: 2  # 程序启动后，第x天的凌晨开始第一次训练
+    training_interval_days: 3  # 训练间隔天数（每3天训练一次）
+    embedding_model_path: "./models/Qwen3-Embedding-4B"  # Embedding模型路径（用于提取记忆和SFT向量）
 ```
 
 ### 提示词配置
@@ -120,8 +123,10 @@ memory:
 - **自动记忆**：对话内容自动保存到向量库
 - **智能检索**：通过 `<recall>` token触发记忆检索
 - **向量注入**：检索到的记忆通过 `<|memory_pad|>` 注入模型
-- **持续学习**：定时训练更新模型（每两天凌晨3点）
-- **记忆混合训练**：第二步训练会将记忆条目拆成“前置SFT”“前后拼接SFT”两种场景，并额外插入同等数量的纯SFT样本，形成 1:1:1 的混合比例，确保模型在回忆之后仍能输出完整的SFT结构。
+- **持续学习**：定时训练更新模型（可配置首次训练延迟和训练间隔）
+- **专用Embedding模型**：使用Qwen3-Embedding模型专门提取记忆条目和SFT数据的向量表征，提高向量质量
+- **记忆混合训练**：第二步训练会将记忆条目拆成"前置SFT""前后拼接SFT"两种场景，并额外插入同等数量的纯SFT样本，形成 1:1:1 的混合比例，确保模型在回忆之后仍能输出完整的SFT结构
+- **内存优化**：修复token截断后内存历史未更新的问题，避免内存泄漏
 
 ## 开发
 
@@ -204,4 +209,33 @@ memory:
 
 ---
 
-v2.1 - 训练调度优化 (2024-11-26)
+## 更新日志
+
+### v2.2 - Embedding模型集成与训练优化 (2024-12-02)
+
+**主要更新：**
+
+1. **集成Qwen3-Embedding模型**
+   - 使用专门的Qwen3-Embedding模型提取记忆条目和SFT数据的向量表征
+   - 实现批量向量提取，提高效率
+   - 使用L2归一化处理embedding向量，提高检索质量
+   - 支持配置embedding模型路径（`embedding_model_path`）
+
+2. **训练调度优化**
+   - 支持配置首次训练延迟天数（`first_training_delay_days`）
+   - 支持配置训练间隔天数（`training_interval_days`）
+   - 默认配置：启动后第2天凌晨开始第一次训练，之后每3天训练一次
+
+3. **Bug修复**
+   - 修复token截断后内存历史未更新的问题，避免内存泄漏
+   - 修复embedding维度配置（从4096改为2560，适配4B模型）
+   - 修复训练过程中的IndentationError和NameError
+   - 修复SFT向量提取时processor未传递的问题
+   - 改进设备映射逻辑，正确处理CUDA_VISIBLE_DEVICES
+
+4. **代码优化**
+   - 移除Instruct prompt，直接使用文本提取embedding
+   - 改进模型加载/卸载逻辑，确保正确清理GPU显存
+   - 添加详细的调试日志
+
+### v2.1 - 训练调度优化 (2024-11-26)
